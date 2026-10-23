@@ -30,8 +30,17 @@ export class MesasController {
   @Post()
   @UseGuards(AuthGuard)
   @Roles('administracion')
-  create(@Body() body: { numero: number; capacidad?: number }) {
+  create(@Body() body: { numero: number; capacidad?: number; zonaId?: string; tipo?: 'mesa' | 'barra' }) {
     return this.mesas.create(body);
+  }
+
+  @Post('bulk')
+  @UseGuards(AuthGuard)
+  @Roles('administracion')
+  createRango(
+    @Body() body: { desde: number; hasta: number; capacidad?: number; zonaId?: string; tipo?: 'mesa' | 'barra' },
+  ) {
+    return this.mesas.createRango(body);
   }
 
   @Patch(':id')

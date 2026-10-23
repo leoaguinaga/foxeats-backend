@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { DRIZZLE } from '../db/db.module';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from '../db/schema';
@@ -37,8 +37,92 @@ export class MesasService {
     private zonas: ZonasService,
   ) {}
 
+  /**
+   * Mesas con el resumen de su visita abierta (si la hay): quién la abrió,
+   * desde cuándo y sus rondas activas con platos. El salón del mesero lo usa
+   * para saber qué mesa es suya, cuál tiene platos listos y cuál espera.
+   */
   async findAll() {
-    return this.db.select().from(schema.mesa).orderBy(schema.mesa.numero);
+    const mesas = await this.db.select().from(schema.mesa).orderBy(schema.mesa.numero);
+
+    const visitas = await this.db
+      .select({
+        id: schema.visitaMesa.id,
+        mesaId: schema.visitaMesa.mesaId,
+        fechaApertura: schema.visitaMesa.fechaApertura,
+        abiertaPorId: schema.visitaMesa.abiertaPorUsuarioId,
+        abiertaPorNombre: schema.user.name,
+      })
+      .from(schema.visitaMesa)
+      .innerJoin(schema.user, eq(schema.user.id, schema.visitaMesa.abiertaPorUsuarioId))
+      .where(and(eq(schema.visitaMesa.estado, 'abierta'), eq(schema.visitaMesa.tipo, 'mesa')));
+
+    const visitaIds = visitas.map((v) => v.id);
+    const pedidos = visitaIds.length
+      ? await this.db
+          .select()
+          .from(schema.pedido)
+          .where(
+            and(
+              inArray(schema.pedido.visitaMesaId, visitaIds),
+              inArray(schema.pedido.estado, ['pendiente', 'en_preparacion', 'listo', 'entregado']),
+            ),
+          )
+          .orderBy(schema.pedido.fechaCreacion)
+      : [];
+    const entregadas = new Map<string, number>();
+    for (const p of pedidos) {
+      if (p.estado === 'entregado') entregadas.set(p.visitaMesaId, (entregadas.get(p.visitaMesaId) ?? 0) + 1);
+    }
+    const activos = pedidos.filter((p) => p.estado !== 'entregado');
+
+    const pedidoIds = activos.map((p) => p.id);
+    const items = pedidoIds.length
+      ? await this.db
+          .select({
+            pedidoId: schema.itemPedido.pedidoId,
+            cantidad: schema.itemPedido.cantidad,
+            nombre: schema.platoCarta.nombre,
+          })
+          .from(schema.itemPedido)
+          .innerJoin(schema.platoCarta, eq(schema.platoCarta.id, schema.itemPedido.platoCartaId))
+          .where(and(inArray(schema.itemPedido.pedidoId, pedidoIds), ne(schema.itemPedido.estado, 'cancelado')))
+      : [];
+
+    const ahora = Date.now();
+    const rondasPorVisita = new Map<string, Array<{
+      id: string;
+      estado: 'pendiente' | 'en_preparacion' | 'listo';
+      minutos: number;
+      platos: Array<{ nombre: string; cantidad: number }>;
+    }>>();
+    for (const p of activos) {
+      const lista = rondasPorVisita.get(p.visitaMesaId) ?? [];
+      lista.push({
+        id: p.id,
+        estado: p.estado as 'pendiente' | 'en_preparacion' | 'listo',
+        minutos: Math.floor((ahora - new Date(p.fechaCreacion).getTime()) / 60000),
+        platos: items.filter((i) => i.pedidoId === p.id).map((i) => ({ nombre: i.nombre, cantidad: i.cantidad })),
+      });
+      rondasPorVisita.set(p.visitaMesaId, lista);
+    }
+
+    const visitaPorMesa = new Map(visitas.filter((v) => v.mesaId).map((v) => [v.mesaId as string, v]));
+    return mesas.map((m) => {
+      const v = m.estado === 'ocupada' ? visitaPorMesa.get(m.id) : undefined;
+      return {
+        ...m,
+        visita: v
+          ? {
+              id: v.id,
+              abiertaDesde: v.fechaApertura,
+              abiertaPor: { id: v.abiertaPorId, nombre: v.abiertaPorNombre },
+              rondas: rondasPorVisita.get(v.id) ?? [],
+              rondasEntregadas: entregadas.get(v.id) ?? 0,
+            }
+          : null,
+      };
+    });
   }
 
   async findById(id: string) {

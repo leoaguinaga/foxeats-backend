@@ -646,13 +646,15 @@ export class CajaService {
 
   /**
    * Los platos más vendidos en los últimos 30 días, para la categoría
-   * «Más pedidos» de la caja. Prioriza para llevar y delivery; si todavía
-   * hay pocos datos de mostrador, usa todas las ventas.
+   * «Más pedidos». La caja prioriza para llevar y delivery; el mesero, lo
+   * vendido en salón. Si todavía hay pocos datos de ese tipo, usa todas las ventas.
    */
-  async masPedidos(limite = 8) {
+  async masPedidos(limite = 8, preferir: 'mostrador' | 'mesa' = 'mostrador') {
     const desde = new Date(Date.now() - 30 * 86_400_000);
     const total = sql<number>`sum(${schema.itemPedido.cantidad})::int`;
-    const consultar = (soloMostrador: boolean) =>
+    const tipos: Array<'mesa' | 'llevar' | 'delivery'> =
+      preferir === 'mesa' ? ['mesa'] : ['llevar', 'delivery'];
+    const consultar = (filtrar: boolean) =>
       this.db
         .select({ platoId: schema.itemPedido.platoCartaId, total })
         .from(schema.itemPedido)
@@ -668,9 +670,7 @@ export class CajaService {
           and(
             gte(schema.pedido.fechaCreacion, desde),
             notInArray(schema.itemPedido.estado, ['cancelado']),
-            soloMostrador
-              ? inArray(schema.visitaMesa.tipo, ['llevar', 'delivery'])
-              : undefined,
+            filtrar ? inArray(schema.visitaMesa.tipo, tipos) : undefined,
           ),
         )
         .groupBy(schema.itemPedido.platoCartaId)

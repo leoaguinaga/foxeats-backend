@@ -3,10 +3,9 @@ import {
   Inject,
   NotFoundException,
   BadRequestException,
-  ConflictException,
   Logger,
 } from '@nestjs/common';
-import { eq, and, inArray, sql, notInArray } from 'drizzle-orm';
+import { eq, and, inArray, notInArray } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE } from '../db/db.module';
 import { PRINT_SERVICE } from '../print/print.interface';
@@ -14,6 +13,20 @@ import type { PrintService } from '../print/print.interface';
 import { PromocionesService } from '../promociones/promociones.service';
 import { StockService } from '../stock/stock.service';
 import * as schema from '../db/schema';
+
+type FilaMesa = typeof schema.mesa.$inferSelect;
+
+/**
+ * Nombre visible de la mesa, igual que en el salón: los puestos de barra se
+ * numeran «Barra 1, 2…» dentro de su zona en orden de número.
+ */
+function etiquetaMesa(mesa: FilaMesa, todas: FilaMesa[]): string {
+  if (mesa.tipo !== 'barra') return `Mesa ${mesa.numero}`;
+  const puestos = todas
+    .filter((m) => m.tipo === 'barra' && m.zonaId === mesa.zonaId)
+    .sort((a, b) => a.numero - b.numero);
+  return `Barra ${puestos.findIndex((m) => m.id === mesa.id) + 1 || 1}`;
+}
 
 @Injectable()
 export class OperacionService {
@@ -27,38 +40,74 @@ export class OperacionService {
 
   // ─── Monitor: rondas pendientes de todas las mesas ───────────────────────
 
+  /**
+   * Rondas en cocina o listas de las visitas abiertas, con lo que el monitor
+   * del mesero necesita para nombrarlas sin pedir la carta: tipo de visita,
+   * cliente, quién la abrió, número de ronda dentro de la visita y platos.
+   */
   async getMonitor() {
-    // Visitas abiertas
     const visitas = await this.db
-      .select()
+      .select({
+        id: schema.visitaMesa.id,
+        mesaId: schema.visitaMesa.mesaId,
+        tipo: schema.visitaMesa.tipo,
+        nombreCliente: schema.visitaMesa.nombreCliente,
+        abiertaPorId: schema.visitaMesa.abiertaPorUsuarioId,
+        abiertaPorNombre: schema.user.name,
+      })
       .from(schema.visitaMesa)
+      .innerJoin(
+        schema.user,
+        eq(schema.user.id, schema.visitaMesa.abiertaPorUsuarioId),
+      )
       .where(eq(schema.visitaMesa.estado, 'abierta'));
 
     if (visitas.length === 0) return [];
 
     const visitaIds = visitas.map((v) => v.id);
 
-    // Pedidos pendientes o en preparación dentro de visitas abiertas
-    const pedidos = await this.db
-      .select()
+    // Todas las rondas de las visitas abiertas: las activas se devuelven y el
+    // resto sirve para saber qué número de ronda es cada una.
+    const todas = await this.db
+      .select({
+        id: schema.pedido.id,
+        visitaMesaId: schema.pedido.visitaMesaId,
+        estado: schema.pedido.estado,
+        fechaCreacion: schema.pedido.fechaCreacion,
+        fechaListo: schema.pedido.fechaListo,
+      })
       .from(schema.pedido)
-      .where(
-        and(
-          inArray(schema.pedido.visitaMesaId, visitaIds),
-          inArray(schema.pedido.estado, [
-            'pendiente',
-            'en_preparacion',
-            'listo',
-          ]),
-        ),
-      );
+      .where(inArray(schema.pedido.visitaMesaId, visitaIds))
+      .orderBy(schema.pedido.fechaCreacion);
 
+    const numeroRonda = new Map<string, number>();
+    const contador = new Map<string, number>();
+    for (const p of todas) {
+      const n = (contador.get(p.visitaMesaId) ?? 0) + 1;
+      contador.set(p.visitaMesaId, n);
+      numeroRonda.set(p.id, n);
+    }
+
+    const pedidos = todas.filter((p) =>
+      ['pendiente', 'en_preparacion', 'listo'].includes(p.estado),
+    );
     if (pedidos.length === 0) return [];
 
     const pedidoIds = pedidos.map((p) => p.id);
     const items = await this.db
-      .select()
+      .select({
+        pedidoId: schema.itemPedido.pedidoId,
+        platoCartaId: schema.itemPedido.platoCartaId,
+        nombre: schema.platoCarta.nombre,
+        cantidad: schema.itemPedido.cantidad,
+        notas: schema.itemPedido.notas,
+        estado: schema.itemPedido.estado,
+      })
       .from(schema.itemPedido)
+      .innerJoin(
+        schema.platoCarta,
+        eq(schema.platoCarta.id, schema.itemPedido.platoCartaId),
+      )
       .where(inArray(schema.itemPedido.pedidoId, pedidoIds));
 
     const mesas = await this.db.select().from(schema.mesa);
@@ -67,21 +116,35 @@ export class OperacionService {
 
     return pedidos.map((p) => {
       const visita = visitaMap.get(p.visitaMesaId)!;
-      const mesa = visita.mesaId ? mesaMap.get(visita.mesaId) : null;
+      const mesa =
+        visita.tipo === 'mesa' && visita.mesaId
+          ? mesaMap.get(visita.mesaId)
+          : null;
       const minutosEspera = Math.floor(
         (Date.now() - new Date(p.fechaCreacion).getTime()) / 60000,
       );
       return {
         pedidoId: p.id,
         visitaId: p.visitaMesaId,
-        mesaNumero: mesa?.numero ?? 0,
+        // null para llevar y delivery (antes salían como «Mesa 0»).
+        mesaNumero: mesa?.numero ?? null,
+        mesaEtiqueta: mesa ? etiquetaMesa(mesa, mesas) : null,
+        tipoVisita: visita.tipo,
+        nombreCliente: visita.nombreCliente,
+        abiertaPor: {
+          id: visita.abiertaPorId,
+          nombre: visita.abiertaPorNombre,
+        },
+        numeroRonda: numeroRonda.get(p.id) ?? 1,
         estado: p.estado,
         fechaCreacion: p.fechaCreacion,
+        fechaListo: p.fechaListo,
         minutosEspera,
         items: items
-          .filter((i) => i.pedidoId === p.id)
+          .filter((i) => i.pedidoId === p.id && i.estado !== 'cancelado')
           .map((i) => ({
             platoCartaId: i.platoCartaId,
+            nombre: i.nombre,
             cantidad: i.cantidad,
             notas: i.notas,
           })),
@@ -201,7 +264,42 @@ export class OperacionService {
         0,
       );
 
-    return { ...visita, pedidos: pedidosConItems, total: total.toFixed(2) };
+    // Para la cabecera de la mesa: qué mesa es y quién la atiende.
+    let mesa: { numero: number; etiqueta: string; zona: string | null } | null =
+      null;
+    if (visita.tipo === 'mesa' && visita.mesaId) {
+      const [m] = await this.db
+        .select({ mesa: schema.mesa, zona: schema.zona.nombre })
+        .from(schema.mesa)
+        .leftJoin(schema.zona, eq(schema.zona.id, schema.mesa.zonaId))
+        .where(eq(schema.mesa.id, visita.mesaId));
+      if (m) {
+        const vecinas =
+          m.mesa.tipo === 'barra'
+            ? await this.db
+                .select()
+                .from(schema.mesa)
+                .where(eq(schema.mesa.tipo, 'barra'))
+            : [];
+        mesa = {
+          numero: m.mesa.numero,
+          etiqueta: etiquetaMesa(m.mesa, vecinas),
+          zona: m.zona,
+        };
+      }
+    }
+    const [abiertaPor] = await this.db
+      .select({ id: schema.user.id, nombre: schema.user.name })
+      .from(schema.user)
+      .where(eq(schema.user.id, visita.abiertaPorUsuarioId));
+
+    return {
+      ...visita,
+      mesa,
+      abiertaPor: abiertaPor ?? null,
+      pedidos: pedidosConItems,
+      total: total.toFixed(2),
+    };
   }
 
   // ─── Crear pedido (ronda) ─────────────────────────────────────────────────
@@ -547,137 +645,6 @@ export class OperacionService {
       .catch((err) => {
         this.logger.error(
           `Error al imprimir precuenta (Mesero): ${err.message}`,
-          err.stack,
-        );
-      });
-
-    return { ok: true };
-  }
-
-  // ─── Cobrar desde mesero (busca turno de caja abierto) ───────────────────
-
-  async registrarPagoMesero(
-    usuarioId: string,
-    visitaId: string,
-    pagos: Array<{
-      metodoPago: 'efectivo' | 'tarjeta' | 'yape_plin' | 'transferencia';
-      monto: number;
-    }>,
-  ) {
-    if (!pagos.length)
-      throw new BadRequestException('Debe incluir al menos un método de pago');
-
-    // Buscar cualquier turno de caja abierto
-    const [turno] = await this.db
-      .select()
-      .from(schema.turnoCaja)
-      .where(eq(schema.turnoCaja.estado, 'abierto'));
-
-    if (!turno)
-      throw new BadRequestException(
-        'No hay turno de caja abierto. Pide al cajero que abra el turno.',
-      );
-
-    const [pagoExistente] = await this.db
-      .select()
-      .from(schema.pago)
-      .where(eq(schema.pago.visitaMesaId, visitaId));
-    if (pagoExistente)
-      throw new ConflictException('Esta visita ya fue cobrada');
-
-    const visita = await this.getVisita(visitaId);
-    if (visita.estado === 'cerrada')
-      throw new BadRequestException('La visita ya está cerrada');
-
-    const totalEsperado = parseFloat(visita.total);
-    const totalRecibido = pagos.reduce((s, p) => s + p.monto, 0);
-    if (Math.abs(totalRecibido - totalEsperado) > 0.01) {
-      throw new BadRequestException(
-        `La suma de pagos (S/${totalRecibido.toFixed(2)}) no coincide con el total (S/${visita.total})`,
-      );
-    }
-
-    const [mesa] = visita.mesaId
-      ? await this.db
-          .select()
-          .from(schema.mesa)
-          .where(eq(schema.mesa.id, visita.mesaId))
-      : [null];
-
-    const items = visita.pedidos
-      .filter((p) => p.estado !== 'cancelado')
-      .flatMap((p) => p.items);
-
-    const platoIds = [...new Set(items.map((i) => i.platoCartaId))];
-    const platos = platoIds.length
-      ? await this.db
-          .select()
-          .from(schema.platoCarta)
-          .where(inArray(schema.platoCarta.id, platoIds))
-      : [];
-    const platoMap = new Map(platos.map((p) => [p.id, p]));
-
-    const resumen = new Map<
-      string,
-      {
-        nombre: string;
-        cantidad: number;
-        precioUnitario: string;
-        descuentoUnitario: string;
-      }
-    >();
-    for (const item of items) {
-      const key = `${item.platoCartaId}::${item.descuentoUnitario}`;
-      if (resumen.has(key)) {
-        resumen.get(key)!.cantidad += item.cantidad;
-      } else {
-        resumen.set(key, {
-          nombre: platoMap.get(item.platoCartaId)?.nombre ?? item.platoCartaId,
-          cantidad: item.cantidad,
-          precioUnitario: item.precioUnitarioCongelado,
-          descuentoUnitario: item.descuentoUnitario ?? '0.00',
-        });
-      }
-    }
-
-    await this.db.insert(schema.pago).values(
-      pagos.map((p) => ({
-        turnoCajaId: turno.id,
-        visitaMesaId: visitaId,
-        registradoPorUsuarioId: usuarioId,
-        metodoPago: p.metodoPago,
-        montoTotal: p.monto.toFixed(2),
-      })),
-    );
-
-    await this.db
-      .update(schema.visitaMesa)
-      .set({ estado: 'cerrada', fechaCierre: new Date() })
-      .where(eq(schema.visitaMesa.id, visitaId));
-
-    if (visita.mesaId) {
-      await this.db
-        .update(schema.mesa)
-        .set({ estado: 'libre', updatedAt: new Date() })
-        .where(eq(schema.mesa.id, visita.mesaId));
-    }
-
-    const metodosLabel = pagos
-      .map((p) => p.metodoPago.replace('_', '/'))
-      .join(' + ');
-    this.printer
-      .printReceipt({
-        visitaId,
-        mesaNumero: mesa?.numero ?? 0,
-        items: Array.from(resumen.values()),
-        total: visita.total,
-        descuentoTotal: '0.00',
-        metodoPago: metodosLabel,
-        fechaPago: new Date(),
-      })
-      .catch((err) => {
-        this.logger.error(
-          `Error al imprimir recibo (Pago Mesero): ${err.message}`,
           err.stack,
         );
       });

@@ -106,23 +106,4 @@ export class OperacionController {
   imprimirCuenta(@Param('id') visitaId: string) {
     return this.operacion.imprimirCuenta(visitaId);
   }
-
-  @Post('visits/:id/pay-waiter')
-  registrarPagoMesero(
-    @Param('id') visitaId: string,
-    @Request() req: { user: { id: string } },
-    @Body()
-    body: {
-      pagos: Array<{
-        metodoPago: 'efectivo' | 'tarjeta' | 'yape_plin' | 'transferencia';
-        monto: number;
-      }>;
-    },
-  ) {
-    return this.operacion.registrarPagoMesero(
-      req.user.id,
-      visitaId,
-      body.pagos,
-    );
-  }
 }

@@ -8,15 +8,22 @@ import {
   Request,
   Patch,
   Delete,
+  Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CajaService } from './caja.service';
+import { CajaReportesService } from './caja-reportes.service';
 import { AuthGuard, Roles } from '../auth/auth.guard';
 
 @Controller('cash')
 @UseGuards(AuthGuard)
 @Roles('cajero', 'administracion')
 export class CajaController {
-  constructor(private readonly caja: CajaService) {}
+  constructor(
+    private readonly caja: CajaService,
+    private readonly reportes: CajaReportesService,
+  ) {}
 
   @Get('shift/current')
   getTurnoActual(@Request() req: { user: { id: string } }) {
@@ -64,18 +71,42 @@ export class CajaController {
   }
 
   @Get('shifts')
-  getTurnosHoy() {
-    return this.caja.getTurnosHoy();
+  getTurnos(
+    @Query('desde') desde?: string,
+    @Query('hasta') hasta?: string,
+    @Query('cajero') cajero?: string,
+  ) {
+    return this.reportes.resumen({ desde, hasta, cajero });
   }
 
-  @Get('shifts/history')
-  getTurnosHistorial() {
-    return this.caja.getTurnosHistorial();
+  @Get('export.csv')
+  async exportarCsv(
+    @Res() res: Response,
+    @Query('desde') desde?: string,
+    @Query('hasta') hasta?: string,
+    @Query('cajero') cajero?: string,
+  ) {
+    const { nombre, csv } = await this.reportes.exportarCsv({
+      desde,
+      hasta,
+      cajero,
+    });
+    res
+      .set({
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${nombre}"`,
+      })
+      .send(csv);
   }
 
   @Get('shifts/:id')
   getTurnoDetalle(@Param('id') id: string) {
-    return this.caja.getTurnoDetalle(id);
+    return this.reportes.detalle(id);
+  }
+
+  @Get('mas-pedidos')
+  getMasPedidos() {
+    return this.caja.masPedidos();
   }
 
   @Get('visits-to-collect')
@@ -112,9 +143,10 @@ export class CajaController {
   @Post('visits/:id/cancel')
   cancelarVisita(
     @Param('id') visitaId: string,
+    @Request() req: { user: { id: string } },
     @Body() body: { motivo?: string },
   ) {
-    return this.caja.cancelarVisita(visitaId, body.motivo ?? '');
+    return this.caja.cancelarVisita(visitaId, body.motivo ?? '', req.user.id);
   }
 
   @Post('visits/:id/print-precuenta')
@@ -127,7 +159,7 @@ export class CajaController {
     @Request() req: { user: { id: string } },
     @Body()
     body: {
-      nombreCliente: string;
+      nombreCliente?: string;
       items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>;
     },
   ) {

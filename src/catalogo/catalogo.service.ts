@@ -1,8 +1,14 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
+import { eq, and, asc } from 'drizzle-orm';
 import { DRIZZLE } from '../db/db.module';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from '../db/schema';
+import { StockService } from '../stock/stock.service';
 
 type PlatoConCategoria = typeof schema.platoCarta.$inferSelect & {
   categoria: typeof schema.categoriaCarta.$inferSelect;
@@ -18,6 +24,10 @@ async function enrichWithStock(
       ...p,
       stockActual: null as number | null,
       nombreUnidadMinima: null as string | null,
+      quedan: null as number | null,
+      stockMinimo: null as number | null,
+      insumoId: null as string | null,
+      cantidadConsumida: null as number | null,
     }));
 
   const todasRecetas = await db
@@ -26,6 +36,8 @@ async function enrichWithStock(
       cantidadConsumida: schema.recetaPlato.cantidadConsumida,
       stockActual: schema.insumo.stockActual,
       nombreUnidadMinima: schema.insumo.nombreUnidadMinima,
+      minimo: schema.insumo.minimo,
+      insumoId: schema.recetaPlato.insumoId,
     })
     .from(schema.recetaPlato)
     .innerJoin(
@@ -35,21 +47,29 @@ async function enrichWithStock(
 
   const recetaMap = new Map(todasRecetas.map((r) => [r.platoCartaId, r]));
 
+  // Tener receta es lo que hace que un plato descuente y muestre «quedan N».
   return platos.map((p) => {
     const receta = recetaMap.get(p.id);
     return {
       ...p,
-      stockActual:
-        p.categoria?.descuentaStock && receta ? receta.stockActual : null,
-      nombreUnidadMinima:
-        p.categoria?.descuentaStock && receta ? receta.nombreUnidadMinima : null,
+      stockActual: receta ? receta.stockActual : null,
+      nombreUnidadMinima: receta ? receta.nombreUnidadMinima : null,
+      quedan: receta
+        ? Math.floor(Math.max(receta.stockActual, 0) / receta.cantidadConsumida)
+        : null,
+      stockMinimo: receta ? receta.minimo : null,
+      insumoId: receta ? receta.insumoId : null,
+      cantidadConsumida: receta ? receta.cantidadConsumida : null,
     };
   });
 }
 
 @Injectable()
 export class CatalogoService {
-  constructor(@Inject(DRIZZLE) private db: NodePgDatabase<typeof schema>) {}
+  constructor(
+    @Inject(DRIZZLE) private db: NodePgDatabase<typeof schema>,
+    private stock: StockService,
+  ) {}
 
   // ─── Categorías ───
 
@@ -125,29 +145,59 @@ export class CatalogoService {
     return row;
   }
 
-  async createInsumo(data: {
-    nombre: string;
-    unidadesPorUnidadDeCompra?: number;
-    nombreUnidadMinima?: string;
-    stockActual?: number;
-  }) {
-    const [row] = await this.db.insert(schema.insumo).values(data).returning();
-    return row;
+  async createInsumo(
+    data: {
+      nombre: string;
+      unidadesPorUnidadDeCompra?: number;
+      nombreUnidadMinima?: string;
+      nombreUnidadCompra?: string;
+      minimo?: number;
+      stockActual?: number;
+    },
+    usuarioId: string | null = null,
+  ) {
+    const { stockActual = 0, ...resto } = data;
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(schema.insumo)
+        .values({ ...resto, stockActual: Math.max(0, stockActual) })
+        .returning();
+      await this.stock.registrarStockInicial(
+        tx,
+        row.id,
+        row.stockActual,
+        usuarioId,
+      );
+      return row;
+    });
   }
 
+  // El stock no se edita aquí: se cambia con merma, corrección, compra o conteo.
   async updateInsumo(
     id: string,
     data: Partial<{
       nombre: string;
       unidadesPorUnidadDeCompra: number;
       nombreUnidadMinima: string;
-      stockActual: number;
+      nombreUnidadCompra: string;
+      minimo: number;
       activo: boolean;
     }>,
   ) {
+    const permitido = {
+      nombre: data.nombre,
+      unidadesPorUnidadDeCompra: data.unidadesPorUnidadDeCompra,
+      nombreUnidadMinima: data.nombreUnidadMinima,
+      nombreUnidadCompra: data.nombreUnidadCompra,
+      minimo: data.minimo,
+      activo: data.activo,
+    };
+    const set = Object.fromEntries(
+      Object.entries(permitido).filter(([, v]) => v !== undefined),
+    );
     const [row] = await this.db
       .update(schema.insumo)
-      .set(data)
+      .set({ ...set, updatedAt: new Date() })
       .where(eq(schema.insumo.id, id))
       .returning();
     if (!row) throw new NotFoundException('Insumo no encontrado');
@@ -156,7 +206,7 @@ export class CatalogoService {
 
   // ─── Platos ───
 
-  async findAllPlatos() {
+  async findAllPlatos(incluirRetirados = false) {
     const rows = await this.db
       .select({
         plato: schema.platoCarta,
@@ -167,7 +217,8 @@ export class CatalogoService {
         schema.categoriaCarta,
         eq(schema.platoCarta.categoriaId, schema.categoriaCarta.id),
       )
-      .where(eq(schema.platoCarta.activo, true));
+      .where(incluirRetirados ? undefined : eq(schema.platoCarta.activo, true))
+      .orderBy(asc(schema.platoCarta.createdAt), asc(schema.platoCarta.nombre));
 
     const platosFormatted = rows.map(({ plato, categoria }) => ({
       ...plato,
@@ -260,16 +311,25 @@ export class CatalogoService {
       .where(eq(schema.recetaPlato.platoCartaId, platoCartaId));
   }
 
+  // Un plato descuenta de UN insumo: vincular de nuevo reemplaza el vínculo.
   async createReceta(data: {
     platoCartaId: string;
     insumoId: string;
     cantidadConsumida: number;
   }) {
-    const [row] = await this.db
-      .insert(schema.recetaPlato)
-      .values(data)
-      .returning();
-    return row;
+    if (!Number.isInteger(data.cantidadConsumida) || data.cantidadConsumida < 1)
+      throw new BadRequestException('La cantidad debe ser un entero mayor a 0');
+    return this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.recetaPlato)
+        .where(eq(schema.recetaPlato.platoCartaId, data.platoCartaId));
+      const [row] = await tx
+        .insert(schema.recetaPlato)
+        .values(data)
+        .returning();
+      await this.stock.recalcularDisponibilidad(tx, [data.insumoId]);
+      return row;
+    });
   }
 
   async deleteReceta(id: string) {
@@ -278,6 +338,11 @@ export class CatalogoService {
       .where(eq(schema.recetaPlato.id, id))
       .returning();
     if (!row) throw new NotFoundException('Receta no encontrada');
+    // Sin receta la disponibilidad vuelve a ser manual: no dejarlo apagado por stock.
+    await this.db
+      .update(schema.platoCarta)
+      .set({ disponible: true, updatedAt: new Date() })
+      .where(eq(schema.platoCarta.id, row.platoCartaId));
     return row;
   }
 }

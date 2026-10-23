@@ -34,6 +34,12 @@ export class OperacionController {
     return this.operacion.abrirMesa(mesaId, req.user.id);
   }
 
+  // Debe ir antes de 'visits/:id': si no, Nest la toma como un id de visita.
+  @Get('visits/active-llevar-delivery')
+  getVisitasActivasLlevarDelivery() {
+    return this.operacion.getVisitasActivasLlevarDelivery();
+  }
+
   @Get('visits/:id')
   getVisita(@Param('id') visitaId: string) {
     return this.operacion.getVisita(visitaId);
@@ -59,6 +65,7 @@ export class OperacionController {
   @Patch('orders/:id/status')
   cambiarEstado(
     @Param('id') pedidoId: string,
+    @Request() req: { user: { id: string } },
     @Body()
     body: {
       estado: 'en_preparacion' | 'listo' | 'entregado' | 'cancelado';
@@ -67,12 +74,16 @@ export class OperacionController {
   ) {
     return this.operacion.cambiarEstadoPedido(pedidoId, body.estado, {
       motivoCancelacion: body.motivoCancelacion,
+      usuarioId: req.user.id,
     });
   }
 
   @Patch('orders/items/:id/cancel')
-  cancelarItemPedido(@Param('id') itemId: string) {
-    return this.operacion.cancelarItemPedido(itemId);
+  cancelarItemPedido(
+    @Param('id') itemId: string,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.operacion.cancelarItemPedido(itemId, req.user.id);
   }
 
   @Post('visits/:id/close')
@@ -89,11 +100,6 @@ export class OperacionController {
       req.user.id,
       body?.nombreCliente,
     );
-  }
-
-  @Get('visits/active-llevar-delivery')
-  getVisitasActivasLlevarDelivery() {
-    return this.operacion.getVisitasActivasLlevarDelivery();
   }
 
   @Post('visits/:id/print-bill')

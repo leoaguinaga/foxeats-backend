@@ -48,3 +48,15 @@ export class PromocionesController {
     return this.promos.remove(id);
   }
 }
+
+/** Lectura para el salón: qué platos tienen descuento en este momento. */
+@Controller('promociones')
+@UseGuards(AuthGuard)
+export class PromocionesVigentesController {
+  constructor(private readonly promos: PromocionesService) {}
+
+  @Get('vigentes')
+  vigentes() {
+    return this.promos.listarVigentes();
+  }
+}

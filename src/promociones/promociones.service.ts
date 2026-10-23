@@ -46,10 +46,40 @@ function diasFromCsv(csv: string): number[] {
     .filter((n) => !Number.isNaN(n));
 }
 
-// Convierte el día devuelto por JS (0=domingo .. 6=sábado) al estándar ISO (1=lunes .. 7=domingo).
-function isoDay(date: Date): number {
-  const jsDay = date.getDay();
-  return jsDay === 0 ? 7 : jsDay;
+// El servidor puede correr en UTC (Docker): día, hora y fecha se leen siempre
+// en la hora del local, o un «martes» regiría de martes 7 pm a miércoles 7 pm.
+const ZONA_LOCAL = 'America/Lima';
+const DIA_ISO: Record<string, number> = {
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+  Sun: 7,
+};
+
+function momentoLocal(date: Date) {
+  const partes = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: ZONA_LOCAL,
+      weekday: 'short',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(date)
+      .map((p) => [p.type, p.value]),
+  );
+  return {
+    diaIso: DIA_ISO[partes.weekday],
+    hhmmss: `${partes.hour}:${partes.minute}:${partes.second}`,
+    fecha: `${partes.year}-${partes.month}-${partes.day}`,
+  };
 }
 
 @Injectable()
@@ -224,9 +254,66 @@ export class PromocionesService {
     const resultado = new Map<string, typeof schema.promocion.$inferSelect>();
     if (platoCartaIds.length === 0) return resultado;
 
-    const diaIso = isoDay(ahora);
-    const hhmmss = ahora.toTimeString().slice(0, 8); // "HH:MM:SS"
-    const fecha = ahora.toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const aplicables = await this.promosVigentesAhora(ahora);
+    if (aplicables.length === 0) return resultado;
+
+    const links = await this.db
+      .select()
+      .from(schema.promocionPlato)
+      .where(
+        and(
+          inArray(
+            schema.promocionPlato.promocionId,
+            aplicables.map((p) => p.id),
+          ),
+          inArray(schema.promocionPlato.platoCartaId, platoCartaIds),
+        ),
+      );
+
+    const promoMap = new Map(aplicables.map((p) => [p.id, p]));
+
+    for (const link of links) {
+      // primera promo gana (no acumulables)
+      if (!resultado.has(link.platoCartaId)) {
+        resultado.set(link.platoCartaId, promoMap.get(link.promocionId)!);
+      }
+    }
+
+    return resultado;
+  }
+
+  /**
+   * Promos que rigen en este momento con sus platos, para que el mesero vea
+   * el precio final al tomar el pedido. Mismo orden que la resolución real.
+   */
+  async listarVigentes(ahora: Date = new Date()) {
+    const aplicables = await this.promosVigentesAhora(ahora);
+    if (aplicables.length === 0) return [];
+
+    const links = await this.db
+      .select()
+      .from(schema.promocionPlato)
+      .where(
+        inArray(
+          schema.promocionPlato.promocionId,
+          aplicables.map((p) => p.id),
+        ),
+      );
+
+    return aplicables.map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      tipoDescuento: p.tipoDescuento,
+      valorDescuento: p.valorDescuento,
+      horaFin: p.horaFin,
+      platoCartaIds: links
+        .filter((l) => l.promocionId === p.id)
+        .map((l) => l.platoCartaId),
+    }));
+  }
+
+  private async promosVigentesAhora(ahora: Date) {
+    const { diaIso, hhmmss, fecha } = momentoLocal(ahora);
 
     // Filtramos en SQL lo más posible; el día se filtra en memoria (CSV).
     const candidatas = await this.db
@@ -255,34 +342,7 @@ export class PromocionesService {
       )
       .orderBy(asc(schema.promocion.createdAt));
 
-    const aplicables = candidatas.filter((p) =>
-      diasFromCsv(p.diasSemana).includes(diaIso),
-    );
-    if (aplicables.length === 0) return resultado;
-
-    const links = await this.db
-      .select()
-      .from(schema.promocionPlato)
-      .where(
-        and(
-          inArray(
-            schema.promocionPlato.promocionId,
-            aplicables.map((p) => p.id),
-          ),
-          inArray(schema.promocionPlato.platoCartaId, platoCartaIds),
-        ),
-      );
-
-    const promoMap = new Map(aplicables.map((p) => [p.id, p]));
-
-    for (const link of links) {
-      // primera promo gana (no acumulables)
-      if (!resultado.has(link.platoCartaId)) {
-        resultado.set(link.platoCartaId, promoMap.get(link.promocionId)!);
-      }
-    }
-
-    return resultado;
+    return candidatas.filter((p) => diasFromCsv(p.diasSemana).includes(diaIso));
   }
 
   /**

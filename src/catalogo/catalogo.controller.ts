@@ -6,7 +6,9 @@ import {
   Delete,
   Param,
   Body,
+  Query,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { CatalogoService } from './catalogo.service';
 import { AuthGuard, Roles } from '../auth/auth.guard';
@@ -66,15 +68,18 @@ export class CatalogoController {
   @UseGuards(AuthGuard)
   @Roles('administracion')
   createInsumo(
+    @Req() req: { user: { id: string } },
     @Body()
     body: {
       nombre: string;
       unidadesPorUnidadDeCompra?: number;
       nombreUnidadMinima?: string;
+      nombreUnidadCompra?: string;
+      minimo?: number;
       stockActual?: number;
     },
   ) {
-    return this.catalogo.createInsumo(body);
+    return this.catalogo.createInsumo(body, req.user.id);
   }
 
   @Patch('insumos/:id')
@@ -86,10 +91,11 @@ export class CatalogoController {
 
   // ─── Platos (admin para CRUD, mesero/cajero para toggle disponibilidad) ───
 
+  // ?retirados=1 incluye los platos retirados de la carta (admin → Carta)
   @Get('platos')
   @UseGuards(AuthGuard)
-  getPlatos() {
-    return this.catalogo.findAllPlatos();
+  getPlatos(@Query('retirados') retirados?: string) {
+    return this.catalogo.findAllPlatos(retirados === '1');
   }
 
   @Get('platos/:id')

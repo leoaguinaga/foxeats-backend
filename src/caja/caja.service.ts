@@ -6,12 +6,13 @@ import {
   ConflictException,
   Logger,
 } from '@nestjs/common';
-import { eq, and, inArray, notInArray, gte, desc, sql } from 'drizzle-orm';
+import { eq, and, inArray, notInArray, sql, gte, desc } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE } from '../db/db.module';
 import { PRINT_SERVICE } from '../print/print.interface';
 import type { PrintService } from '../print/print.interface';
 import { PromocionesService } from '../promociones/promociones.service';
+import { StockService } from '../stock/stock.service';
 import * as schema from '../db/schema';
 
 type MetodoPago = 'efectivo' | 'tarjeta' | 'yape_plin' | 'transferencia';
@@ -23,6 +24,7 @@ export class CajaService {
     @Inject(DRIZZLE) private db: NodePgDatabase<typeof schema>,
     @Inject(PRINT_SERVICE) private printer: PrintService,
     private readonly promociones: PromocionesService,
+    private readonly stock: StockService,
   ) {}
 
   // ─── Turno activo ─────────────────────────────────────────────────────────
@@ -48,6 +50,8 @@ export class CajaService {
         montoTotal: schema.pago.montoTotal,
         fechaPago: schema.pago.fechaPago,
         mesaNumero: schema.mesa.numero,
+        visitaTipo: schema.visitaMesa.tipo,
+        nombreCliente: schema.visitaMesa.nombreCliente,
       })
       .from(schema.pago)
       .leftJoin(
@@ -283,6 +287,14 @@ export class CajaService {
           fechaApertura: visita.fechaApertura,
           total: total.toFixed(2),
           pedidos: pedidosVisita.length,
+          // Para llevar o delivery con todo lo de cocina listo y sin entregar.
+          listo:
+            visita.tipo !== 'mesa' &&
+            pedidosVisita.length > 0 &&
+            pedidosVisita.every((p) =>
+              ['listo', 'entregado'].includes(p.estado),
+            ) &&
+            pedidosVisita.some((p) => p.estado === 'listo'),
         };
       })
       .sort((a, b) => {
@@ -574,214 +586,6 @@ export class CajaService {
     return nuevosPagos;
   }
 
-  // ─── Historial de turnos del día (para admin) ────────────────────────────
-
-  async getTurnosHoy() {
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-
-    const filas = await this.db
-      .select({
-        turno: schema.turnoCaja,
-        cajeroNombre: schema.user.name,
-      })
-      .from(schema.turnoCaja)
-      .leftJoin(
-        schema.user,
-        eq(schema.turnoCaja.cajeroUsuarioId, schema.user.id),
-      )
-      .where(gte(schema.turnoCaja.fechaApertura, hoy))
-      .orderBy(desc(schema.turnoCaja.fechaApertura));
-
-    if (!filas.length) return [];
-
-    const turnoIds = filas.map((f) => f.turno.id);
-    const pagos = await this.db
-      .select()
-      .from(schema.pago)
-      .where(inArray(schema.pago.turnoCajaId, turnoIds));
-
-    const gastos = await this.db
-      .select()
-      .from(schema.gasto)
-      .where(inArray(schema.gasto.turnoCajaId, turnoIds));
-
-    return filas.map(({ turno, cajeroNombre }) => {
-      const pagosTurno = pagos.filter((p) => p.turnoCajaId === turno.id);
-      const gastosTurno = gastos.filter((g) => g.turnoCajaId === turno.id);
-      const porCanal = {
-        efectivo: 0,
-        tarjeta: 0,
-        yape_plin: 0,
-        transferencia: 0,
-      };
-      for (const p of pagosTurno) {
-        const m = p.metodoPago;
-        if (m in porCanal) porCanal[m] += parseFloat(p.montoTotal);
-      }
-      const totalTurno = Object.values(porCanal).reduce((s, v) => s + v, 0);
-      const totalEfectivo = porCanal.efectivo;
-      const totalGastos = gastosTurno.reduce(
-        (s, g) => s + parseFloat(g.monto),
-        0,
-      );
-      return {
-        ...turno,
-        cajeroNombre: cajeroNombre ?? 'Desconocido',
-        porCanal: {
-          efectivo: porCanal.efectivo.toFixed(2),
-          tarjeta: porCanal.tarjeta.toFixed(2),
-          yape_plin: porCanal.yape_plin.toFixed(2),
-          transferencia: porCanal.transferencia.toFixed(2),
-        },
-        totalTurno: totalTurno.toFixed(2),
-        totalGastos: totalGastos.toFixed(2),
-        montoCierreTeorico: (
-          parseFloat(turno.montoApertura) +
-          totalEfectivo -
-          totalGastos
-        ).toFixed(2),
-        cobros: pagosTurno.length,
-      };
-    });
-  }
-
-  // ─── Historial de turnos anteriores (para admin) ─────────────────────────
-
-  async getTurnosHistorial() {
-    const filas = await this.db
-      .select({
-        turno: schema.turnoCaja,
-        cajeroNombre: schema.user.name,
-      })
-      .from(schema.turnoCaja)
-      .leftJoin(
-        schema.user,
-        eq(schema.turnoCaja.cajeroUsuarioId, schema.user.id),
-      )
-      .orderBy(desc(schema.turnoCaja.fechaApertura));
-
-    if (!filas.length) return [];
-
-    const turnoIds = filas.map((f) => f.turno.id);
-    const pagos = await this.db
-      .select()
-      .from(schema.pago)
-      .where(inArray(schema.pago.turnoCajaId, turnoIds));
-
-    const gastos = await this.db
-      .select()
-      .from(schema.gasto)
-      .where(inArray(schema.gasto.turnoCajaId, turnoIds));
-
-    return filas.map(({ turno, cajeroNombre }) => {
-      const pagosTurno = pagos.filter((p) => p.turnoCajaId === turno.id);
-      const gastosTurno = gastos.filter((g) => g.turnoCajaId === turno.id);
-      const porCanal = {
-        efectivo: 0,
-        tarjeta: 0,
-        yape_plin: 0,
-        transferencia: 0,
-      };
-      for (const p of pagosTurno) {
-        const m = p.metodoPago;
-        if (m in porCanal) porCanal[m] += parseFloat(p.montoTotal);
-      }
-      const totalTurno = Object.values(porCanal).reduce((s, v) => s + v, 0);
-      const totalGastos = gastosTurno.reduce(
-        (s, g) => s + parseFloat(g.monto),
-        0,
-      );
-      return {
-        ...turno,
-        cajeroNombre: cajeroNombre ?? 'Desconocido',
-        porCanal: {
-          efectivo: porCanal.efectivo.toFixed(2),
-          tarjeta: porCanal.tarjeta.toFixed(2),
-          yape_plin: porCanal.yape_plin.toFixed(2),
-          transferencia: porCanal.transferencia.toFixed(2),
-        },
-        totalTurno: totalTurno.toFixed(2),
-        totalGastos: totalGastos.toFixed(2),
-        cobros: pagosTurno.length,
-      };
-    });
-  }
-
-  async getTurnoDetalle(turnoId: string) {
-    const [turno] = await this.db
-      .select({
-        turno: schema.turnoCaja,
-        cajeroNombre: schema.user.name,
-      })
-      .from(schema.turnoCaja)
-      .leftJoin(
-        schema.user,
-        eq(schema.turnoCaja.cajeroUsuarioId, schema.user.id),
-      )
-      .where(eq(schema.turnoCaja.id, turnoId));
-
-    if (!turno) throw new NotFoundException('Turno no encontrado');
-
-    const pagos = await this.db
-      .select({
-        id: schema.pago.id,
-        visitaMesaId: schema.pago.visitaMesaId,
-        metodoPago: schema.pago.metodoPago,
-        montoTotal: schema.pago.montoTotal,
-        fechaPago: schema.pago.fechaPago,
-        mesaNumero: schema.mesa.numero,
-        clienteNombre: schema.visitaMesa.nombreCliente,
-        visitaTipo: schema.visitaMesa.tipo,
-      })
-      .from(schema.pago)
-      .leftJoin(
-        schema.visitaMesa,
-        eq(schema.pago.visitaMesaId, schema.visitaMesa.id),
-      )
-      .leftJoin(schema.mesa, eq(schema.visitaMesa.mesaId, schema.mesa.id))
-      .where(eq(schema.pago.turnoCajaId, turnoId))
-      .orderBy(schema.pago.fechaPago);
-
-    const gastos = await this.db
-      .select()
-      .from(schema.gasto)
-      .where(eq(schema.gasto.turnoCajaId, turnoId))
-      .orderBy(schema.gasto.createdAt);
-
-    const porCanal = {
-      efectivo: 0,
-      tarjeta: 0,
-      yape_plin: 0,
-      transferencia: 0,
-    };
-    for (const p of pagos) {
-      const m = p.metodoPago;
-      if (m in porCanal) porCanal[m] += parseFloat(p.montoTotal);
-    }
-
-    const totalEfectivo = porCanal.efectivo;
-    const totalTurno = Object.values(porCanal).reduce((s, v) => s + v, 0);
-    const totalGastos = gastos.reduce((s, g) => s + parseFloat(g.monto), 0);
-
-    return {
-      ...turno.turno,
-      cajeroNombre: turno.cajeroNombre ?? 'Desconocido',
-      pagos,
-      porCanal: {
-        efectivo: porCanal.efectivo.toFixed(2),
-        tarjeta: porCanal.tarjeta.toFixed(2),
-        yape_plin: porCanal.yape_plin.toFixed(2),
-        transferencia: porCanal.transferencia.toFixed(2),
-      },
-      totalEfectivo: totalEfectivo.toFixed(2),
-      totalTurno: totalTurno.toFixed(2),
-      montoCierreTeorico: (
-        parseFloat(turno.turno.montoApertura) + totalEfectivo
-      ).toFixed(2),
-    };
-  }
-
   // ─── Cerrar turno ─────────────────────────────────────────────────────────
 
   async cerrarTurno(cajeroId: string, montoCierreReal: number) {
@@ -824,19 +628,72 @@ export class CajaService {
     return turnoCerrado;
   }
 
+  /** «Cliente N» correlativo de los pedidos de mostrador del turno abierto. */
+  private async siguienteClienteN() {
+    const turno = await this.getTurnoActivo();
+    const desde = turno?.fechaApertura ?? new Date(Date.now() - 12 * 3600_000);
+    const [{ n }] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.visitaMesa)
+      .where(
+        and(
+          inArray(schema.visitaMesa.tipo, ['llevar', 'delivery']),
+          gte(schema.visitaMesa.fechaApertura, desde),
+        ),
+      );
+    return `Cliente ${n + 1}`;
+  }
+
+  /**
+   * Los platos más vendidos en los últimos 30 días, para la categoría
+   * «Más pedidos» de la caja. Prioriza para llevar y delivery; si todavía
+   * hay pocos datos de mostrador, usa todas las ventas.
+   */
+  async masPedidos(limite = 8) {
+    const desde = new Date(Date.now() - 30 * 86_400_000);
+    const total = sql<number>`sum(${schema.itemPedido.cantidad})::int`;
+    const consultar = (soloMostrador: boolean) =>
+      this.db
+        .select({ platoId: schema.itemPedido.platoCartaId, total })
+        .from(schema.itemPedido)
+        .innerJoin(
+          schema.pedido,
+          eq(schema.itemPedido.pedidoId, schema.pedido.id),
+        )
+        .innerJoin(
+          schema.visitaMesa,
+          eq(schema.pedido.visitaMesaId, schema.visitaMesa.id),
+        )
+        .where(
+          and(
+            gte(schema.pedido.fechaCreacion, desde),
+            notInArray(schema.itemPedido.estado, ['cancelado']),
+            soloMostrador
+              ? inArray(schema.visitaMesa.tipo, ['llevar', 'delivery'])
+              : undefined,
+          ),
+        )
+        .groupBy(schema.itemPedido.platoCartaId)
+        .orderBy(desc(total))
+        .limit(limite);
+
+    let filas = await consultar(true);
+    if (filas.length < 4) filas = await consultar(false);
+    return filas.map((f) => f.platoId);
+  }
+
   // ─── Crear Pedido Para Llevar desde Caja ─────────────────────────────────
 
   async crearPedidoLlevar(
     cajeroId: string,
     data: {
-      nombreCliente: string;
+      nombreCliente?: string;
       items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>;
     },
   ) {
-    const nombreCliente = data.nombreCliente.trim();
-    if (!nombreCliente) {
-      throw new BadRequestException('Se requiere el nombre del cliente');
-    }
+    // Sin nombre, el pedido sale como «Cliente N»: es lo que se grita al entregar.
+    const nombreCliente =
+      data.nombreCliente?.trim() || (await this.siguienteClienteN());
     if (!data.items?.length) {
       throw new BadRequestException('Debe incluir al menos un plato');
     }
@@ -923,49 +780,11 @@ export class CajaService {
         .values(itemsInsert)
         .returning();
 
-      // Descontar stock para categorías con descuentaStock = true
-      for (const itemCreado of itemsCreados) {
-        const plato = platoMap.get(itemCreado.platoCartaId)!;
-        if (!plato.categoria?.descuentaStock) continue;
-
-        const [receta] = await tx
-          .select()
-          .from(schema.recetaPlato)
-          .where(eq(schema.recetaPlato.platoCartaId, plato.id));
-        if (!receta) continue;
-
-        const consumido = receta.cantidadConsumida * itemCreado.cantidad;
-
-        const [insumoActualizado] = await tx
-          .update(schema.insumo)
-          .set({
-            stockActual: sql`${schema.insumo.stockActual} - ${consumido}`,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.insumo.id, receta.insumoId))
-          .returning({
-            id: schema.insumo.id,
-            stockActual: schema.insumo.stockActual,
-          });
-
-        if ((insumoActualizado?.stockActual ?? 0) <= 0) {
-          const afectados = await tx
-            .select({ id: schema.recetaPlato.platoCartaId })
-            .from(schema.recetaPlato)
-            .where(eq(schema.recetaPlato.insumoId, receta.insumoId));
-          if (afectados.length) {
-            await tx
-              .update(schema.platoCarta)
-              .set({ disponible: false, updatedAt: new Date() })
-              .where(
-                inArray(
-                  schema.platoCarta.id,
-                  afectados.map((r) => r.id),
-                ),
-              );
-          }
-        }
-      }
+      // Todo plato con receta descuenta; si algo no alcanza, no se crea el pedido.
+      await this.stock.descontarVenta(tx, itemsCreados, {
+        pedidoId: pedido.id,
+        usuarioId: cajeroId,
+      });
 
       return { visita, pedido, items: itemsCreados };
     });
@@ -1000,7 +819,7 @@ export class CajaService {
         });
     }
 
-    return { ok: true, visitaId: resultado.visita.id };
+    return { ok: true, visitaId: resultado.visita.id, nombreCliente };
   }
 
   // ─── Crear Pedido Delivery desde Caja ────────────────────────────────────
@@ -1112,49 +931,11 @@ export class CajaService {
         .values(itemsInsert)
         .returning();
 
-      // Descontar stock para categorías con descuentaStock = true
-      for (const itemCreado of itemsCreados) {
-        const plato = platoMap.get(itemCreado.platoCartaId)!;
-        if (!plato.categoria?.descuentaStock) continue;
-
-        const [receta] = await tx
-          .select()
-          .from(schema.recetaPlato)
-          .where(eq(schema.recetaPlato.platoCartaId, plato.id));
-        if (!receta) continue;
-
-        const consumido = receta.cantidadConsumida * itemCreado.cantidad;
-
-        const [insumoActualizado] = await tx
-          .update(schema.insumo)
-          .set({
-            stockActual: sql`${schema.insumo.stockActual} - ${consumido}`,
-            updatedAt: new Date(),
-          })
-          .where(eq(schema.insumo.id, receta.insumoId))
-          .returning({
-            id: schema.insumo.id,
-            stockActual: schema.insumo.stockActual,
-          });
-
-        if ((insumoActualizado?.stockActual ?? 0) <= 0) {
-          const afectados = await tx
-            .select({ id: schema.recetaPlato.platoCartaId })
-            .from(schema.recetaPlato)
-            .where(eq(schema.recetaPlato.insumoId, receta.insumoId));
-          if (afectados.length) {
-            await tx
-              .update(schema.platoCarta)
-              .set({ disponible: false, updatedAt: new Date() })
-              .where(
-                inArray(
-                  schema.platoCarta.id,
-                  afectados.map((r) => r.id),
-                ),
-              );
-          }
-        }
-      }
+      // Todo plato con receta descuenta; si algo no alcanza, no se crea el pedido.
+      await this.stock.descontarVenta(tx, itemsCreados, {
+        pedidoId: pedido.id,
+        usuarioId: cajeroId,
+      });
 
       return { visita, pedido, items: itemsCreados };
     });
@@ -1189,19 +970,20 @@ export class CajaService {
         });
     }
 
-    return { ok: true, visitaId: resultado.visita.id };
+    return { ok: true, visitaId: resultado.visita.id, nombreCliente };
   }
 
   // ─── Cancelar Visita (Pedido Completo) desde Caja ────────────────────────
 
-  async cancelarVisita(visitaId: string, motivo: string) {
+  async cancelarVisita(visitaId: string, motivo: string, usuarioId?: string) {
     const [visita] = await this.db
       .select()
       .from(schema.visitaMesa)
       .where(eq(schema.visitaMesa.id, visitaId));
 
     if (!visita) throw new NotFoundException('Visita no encontrada');
-    if (visita.estado === 'cerrada') throw new BadRequestException('El pedido ya está cerrado');
+    if (visita.estado === 'cerrada')
+      throw new BadRequestException('El pedido ya está cerrado');
 
     const motivoLimpio = motivo?.trim() || 'Cancelado desde Caja';
 
@@ -1237,7 +1019,7 @@ export class CajaService {
               .where(eq(schema.itemPedido.id, item.id));
 
             // Restaurar stock
-            await this.restaurarStockItemTx(tx, item);
+            await this.stock.restaurarItem(tx, item, usuarioId ?? null);
           }
         }
       }
@@ -1258,48 +1040,5 @@ export class CajaService {
 
       return { ok: true };
     });
-  }
-
-  private async restaurarStockItemTx(tx: any, item: typeof schema.itemPedido.$inferSelect) {
-    const [row] = await tx
-      .select({
-        plato: schema.platoCarta,
-        categoria: schema.categoriaCarta,
-      })
-      .from(schema.platoCarta)
-      .leftJoin(
-        schema.categoriaCarta,
-        eq(schema.platoCarta.categoriaId, schema.categoriaCarta.id),
-      )
-      .where(eq(schema.platoCarta.id, item.platoCartaId));
-
-    if (!row || !row.categoria?.descuentaStock) return;
-
-    const [receta] = await tx
-      .select()
-      .from(schema.recetaPlato)
-      .where(eq(schema.recetaPlato.platoCartaId, item.platoCartaId));
-    if (!receta) return;
-
-    const restaurado = receta.cantidadConsumida * item.cantidad;
-
-    const [insumoActualizado] = await tx
-      .update(schema.insumo)
-      .set({ stockActual: sql`${schema.insumo.stockActual} + ${restaurado}`, updatedAt: new Date() })
-      .where(eq(schema.insumo.id, receta.insumoId))
-      .returning({ stockActual: schema.insumo.stockActual });
-
-    if ((insumoActualizado?.stockActual ?? 0) > 0) {
-      const afectados = await tx
-        .select({ id: schema.recetaPlato.platoCartaId })
-        .from(schema.recetaPlato)
-        .where(eq(schema.recetaPlato.insumoId, receta.insumoId));
-      if (afectados.length) {
-        await tx
-          .update(schema.platoCarta)
-          .set({ disponible: true, updatedAt: new Date() })
-          .where(inArray(schema.platoCarta.id, afectados.map((r) => r.id)));
-      }
-    }
   }
 }

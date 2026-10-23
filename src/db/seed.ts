@@ -35,7 +35,7 @@ const SEED_USERS: Array<{
 ];
 
 async function main() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, options: '-c timezone=UTC' });
   const db = drizzle(pool, { schema });
 
   for (const u of SEED_USERS) {

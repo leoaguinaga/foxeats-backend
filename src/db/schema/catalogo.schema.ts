@@ -7,7 +7,9 @@ import {
   timestamp,
   uuid,
   pgEnum,
+  index,
 } from 'drizzle-orm/pg-core';
+import { user } from './auth.schema';
 
 /**
  * CATALOGO
@@ -57,6 +59,18 @@ export const insumo = pgTable('insumo', {
   nombreUnidadMinima: text('nombre_unidad_minima').notNull().default('unidad'),
 
   stockActual: integer('stock_actual').notNull().default(0), // en unidad minima
+
+  // Avisar «Por reponer» cuando el stock baja de este numero (unidad minima).
+  // 0 = sin aviso configurado.
+  minimo: integer('minimo').notNull().default(0),
+
+  // Como se llama la unidad en que LLEGA la compra ("pollo", "paquete", "caja").
+  // La conversion a unidad minima es unidadesPorUnidadDeCompra.
+  nombreUnidadCompra: text('nombre_unidad_compra').notNull().default('paquete'),
+
+  // Posicion del insumo en la hoja de conteo (orden del almacen).
+  ordenConteo: integer('orden_conteo').notNull().default(0),
+
   activo: boolean('activo').notNull().default(true),
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -98,3 +112,60 @@ export const recetaPlato = pgTable('receta_plato', {
   // "1/8 pollo" -> 1. "1/4 pollo" -> 2. "Pollo entero" -> 8. "Gaseosa" -> 1.
   cantidadConsumida: integer('cantidad_consumida').notNull(),
 });
+
+// --- Compra: encabezado de una recepcion de mercaderia ---
+export const compraStock = pgTable('compra_stock', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  usuarioId: text('usuario_id').references(() => user.id),
+  proveedor: text('proveedor'), // proveedor o nota libre
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// --- Conteo: encabezado de un conteo fisico de inventario ---
+export const conteoStock = pgTable('conteo_stock', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  usuarioId: text('usuario_id').references(() => user.id),
+  insumosContados: integer('insumos_contados').notNull().default(0),
+  diferencias: integer('diferencias').notNull().default(0),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+// --- Movimiento de stock: UNA fila por cada cambio del stock de un insumo ---
+// Es el libro mayor del inventario: cuando no cuadra, aqui se ve en que
+// momento y por quien cambio. `cantidad` lleva signo (unidad minima) y
+// `saldo` es el stock resultante tras aplicarlo.
+export const tipoMovimientoStockEnum = pgEnum('tipo_movimiento_stock', [
+  'venta',
+  'anulacion',
+  'compra',
+  'merma',
+  'conteo',
+  'correccion',
+]);
+
+export const movimientoStock = pgTable(
+  'movimiento_stock',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    insumoId: uuid('insumo_id')
+      .notNull()
+      .references(() => insumo.id, { onDelete: 'cascade' }),
+    tipo: tipoMovimientoStockEnum('tipo').notNull(),
+    cantidad: integer('cantidad').notNull(),
+    saldo: integer('saldo').notNull(),
+    usuarioId: text('usuario_id').references(() => user.id),
+    motivo: text('motivo'),
+    nota: text('nota'),
+    // Origen (todos opcionales, segun el tipo)
+    pedidoId: uuid('pedido_id'),
+    platoCartaId: uuid('plato_carta_id'),
+    compraId: uuid('compra_id').references(() => compraStock.id, {
+      onDelete: 'set null',
+    }),
+    conteoId: uuid('conteo_id').references(() => conteoStock.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('movimiento_stock_insumo_fecha_idx').on(t.insumoId, t.createdAt)],
+);

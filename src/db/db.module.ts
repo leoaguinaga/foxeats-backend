@@ -11,7 +11,13 @@ export const DRIZZLE = Symbol('DRIZZLE');
     {
       provide: DRIZZLE,
       useFactory: () => {
-        const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+        // Las columnas son timestamp sin zona y drizzle las lee como UTC; si la
+        // sesión usara la zona del servidor (America/Lima en el local), defaultNow()
+        // guardaría hora de Lima y las horas saldrían 5 h antes en pantalla.
+        const pool = new Pool({
+          connectionString: process.env.DATABASE_URL,
+          options: '-c timezone=UTC',
+        });
         return drizzle(pool, { schema });
       },
     },

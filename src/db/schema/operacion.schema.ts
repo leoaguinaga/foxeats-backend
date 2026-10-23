@@ -9,6 +9,7 @@ import {
   serial,
   AnyPgColumn,
   numeric,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.schema';
 import { platoCarta } from './catalogo.schema';
@@ -31,6 +32,38 @@ import { promocion } from './promociones.schema';
 
 export const estadoMesaEnum = pgEnum('estado_mesa', ['libre', 'ocupada']);
 
+/**
+ * Zonas del local (Salón principal, Terraza, Piso 2…). Cada zona decide si
+ * se organiza con un plano (grilla filas × columnas, con referencias fijas
+ * como Entrada o Barra) o solo por número de mesa.
+ */
+export const modoZonaEnum = pgEnum('modo_zona', ['plano', 'numeros']);
+
+export interface ReferenciaPlano {
+  id: string;
+  etiqueta: string;
+  fila: number;
+  col: number;
+  ancho: number;
+  alto: number;
+}
+
+export const zona = pgTable('zona', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  nombre: text('nombre').notNull(),
+  orden: integer('orden').notNull().default(0),
+  modo: modoZonaEnum('modo').notNull().default('plano'),
+  filas: integer('filas').notNull().default(4),
+  columnas: integer('columnas').notNull().default(6),
+  referencias: jsonb('referencias').$type<ReferenciaPlano[]>().notNull().default([]),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+// «barra»: puesto en la barra (taburete). Se muestra como «Barra N», pero
+// conserva su número único para comandas, caja y precuenta.
+export const tipoMesaEnum = pgEnum('tipo_mesa', ['mesa', 'barra']);
+
 export const mesa = pgTable('mesa', {
   id: uuid('id').primaryKey().defaultRandom(),
   numero: integer('numero').notNull().unique(), // ej. 1, 2, 3...
@@ -42,6 +75,12 @@ export const mesa = pgTable('mesa', {
   // pero acepta huecos vacíos (filas/columnas faltantes).
   filaPosicion: integer('fila_posicion'),
   colPosicion: integer('col_posicion'),
+  // Zona a la que pertenece; fila/col son relativas a ella. El número de
+  // mesa sigue siendo único en todo el local.
+  zonaId: uuid('zona_id').references(() => zona.id, { onDelete: 'set null' }),
+  // Celdas que ocupa en el plano (1 normal, 2 mesa ancha).
+  ancho: integer('ancho').notNull().default(1),
+  tipo: tipoMesaEnum('tipo').notNull().default('mesa'),
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),

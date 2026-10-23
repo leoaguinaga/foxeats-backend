@@ -5,7 +5,7 @@ import { eq, inArray } from 'drizzle-orm';
 import * as schema from './schema';
 
 async function main() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL, options: '-c timezone=UTC' });
   const db = drizzle(pool, { schema });
 
   // ─── Insumos con stock inicial del día de apertura ────────────────────────
@@ -16,6 +16,8 @@ async function main() {
       nombre: 'Pollo entero',
       unidadesPorUnidadDeCompra: 8,
       nombreUnidadMinima: 'octavo',
+      nombreUnidadCompra: 'pollo',
+      minimo: 16,
       stockActual: 40,
     }, // 5 pollos = 40 octavos
     {

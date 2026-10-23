@@ -1,48 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as net from 'net';
-import {
-  KitchenTicketData,
-  PrintService,
-  ReceiptData,
-} from './print.interface';
+import { KitchenTicketData, ReceiptData } from './print.interface';
 
+export interface PrinterTarget {
+  ip: string;
+  port: number;
+}
+
+// Envía tickets ESC/POS por TCP. El destino (ip:puerto) lo decide
+// TicketeraPrintService a partir de la configuración guardada en la DB.
 @Injectable()
-export class RealPrintService implements PrintService {
+export class RealPrintService {
   private readonly logger = new Logger(RealPrintService.name);
 
-  private get kitchenPrinter() {
-    return {
-      ip: process.env.PRINTER_KITCHEN_IP ?? '',
-      port: parseInt(process.env.PRINTER_KITCHEN_PORT ?? '9100'),
-    };
-  }
-
-  private get receiptPrinter() {
-    return {
-      ip: process.env.PRINTER_RECEIPT_IP ?? '',
-      port: parseInt(process.env.PRINTER_RECEIPT_PORT ?? '9100'),
-    };
-  }
-
-  async printKitchenTicket(data: KitchenTicketData): Promise<void> {
-    const { ip, port } = this.kitchenPrinter;
-    if (!ip) {
-      this.logger.warn('[REAL] PRINTER_KITCHEN_IP no configurada');
-      return;
-    }
+  async printKitchenTicket(
+    data: KitchenTicketData,
+    { ip, port }: PrinterTarget,
+  ): Promise<void> {
     await this.sendTcp(ip, port, this.buildKitchenTicket(data));
-    this.logger.log(`[REAL] Comanda → Mesa ${data.mesaNumero} (${ip}:${port})`);
+    this.logger.log(`[RED] Comanda → Mesa ${data.mesaNumero} (${ip}:${port})`);
   }
 
-  async printReceipt(data: ReceiptData): Promise<void> {
-    const { ip, port } = this.receiptPrinter;
-    if (!ip) {
-      this.logger.warn('[REAL] PRINTER_RECEIPT_IP no configurada');
-      return;
-    }
+  async printReceipt(
+    data: ReceiptData,
+    { ip, port }: PrinterTarget,
+  ): Promise<void> {
     await this.sendTcp(ip, port, this.buildReceipt(data));
     this.logger.log(
-      `[REAL] Recibo → Mesa ${data.mesaNumero} S/${data.total} (${ip}:${port})`,
+      `[RED] Recibo → Mesa ${data.mesaNumero} S/${data.total} (${ip}:${port})`,
     );
   }
 

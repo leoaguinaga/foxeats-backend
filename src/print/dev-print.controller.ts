@@ -6,7 +6,7 @@ import * as path from 'path';
 const TICKETS_DIR = path.join(process.cwd(), 'dev-tickets');
 
 // Solo expone archivos generados por MockPrintService.
-// En producción (PRINTER_MODE=real) estos endpoints siguen existiendo
+// Con la ticketera en modo «red» estos endpoints siguen existiendo
 // pero devolverán 404 si nunca se escribió el archivo.
 
 @Controller('dev')

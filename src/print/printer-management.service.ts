@@ -1,10 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as net from 'net';
+import {
+  ModoTicketera,
+  TICKETERA_LABEL,
+  TicketeraConfigService,
+  TipoTicketera,
+} from './ticketera-config.service';
 
 export interface PrinterInfo {
-  tipo: 'cocina' | 'recibos';
+  tipo: TipoTicketera;
   label: string;
-  ip: string;
+  modo: ModoTicketera;
+  ip: string | null;
   port: number;
   online: boolean;
   latencyMs?: number;
@@ -14,46 +21,41 @@ export interface PrinterInfo {
 export class PrinterManagementService {
   private readonly logger = new Logger(PrinterManagementService.name);
 
-  private get printers(): Array<{
-    tipo: 'cocina' | 'recibos';
-    label: string;
-    ip: string;
-    port: number;
-  }> {
-    return [
-      {
-        tipo: 'cocina',
-        label: 'Cocina / Comanda',
-        ip: process.env.PRINTER_KITCHEN_IP ?? '',
-        port: parseInt(process.env.PRINTER_KITCHEN_PORT ?? '9100'),
-      },
-      {
-        tipo: 'recibos',
-        label: 'Caja / Recibos',
-        ip: process.env.PRINTER_RECEIPT_IP ?? '',
-        port: parseInt(process.env.PRINTER_RECEIPT_PORT ?? '9100'),
-      },
-    ];
-  }
+  constructor(private readonly config: TicketeraConfigService) {}
 
   async getTicketeras(): Promise<PrinterInfo[]> {
+    const ticketeras = await this.config.list();
     return Promise.all(
-      this.printers.map(async (p) => {
-        if (!p.ip) return { ...p, online: false };
-        const { online, latencyMs } = await this.probe(p.ip, p.port);
-        return { ...p, online, latencyMs };
+      ticketeras.map(async (t) => {
+        const base = {
+          tipo: t.tipo,
+          label: TICKETERA_LABEL[t.tipo],
+          modo: t.modo,
+          ip: t.ip,
+          port: t.puerto,
+        };
+        if (!t.ip) return { ...base, online: false };
+        const { online, latencyMs } = await this.probe(t.ip, t.puerto);
+        return { ...base, online, latencyMs };
       }),
     );
   }
 
-  async testPrint(tipo: 'cocina' | 'recibos'): Promise<void> {
-    const printer = this.printers.find((p) => p.tipo === tipo);
-    if (!printer || !printer.ip)
-      throw new Error(`Ticketera "${tipo}" sin IP configurada`);
-    const buf = this.buildTestPage(printer.label, printer.ip);
-    await this.sendTcp(printer.ip, printer.port, buf);
+  async updateTicketera(
+    tipo: TipoTicketera,
+    body: { modo?: ModoTicketera; ip?: string | null; puerto?: number },
+  ): Promise<void> {
+    await this.config.update(tipo, body);
+  }
+
+  async testPrint(tipo: TipoTicketera): Promise<void> {
+    const t = await this.config.get(tipo);
+    if (!t.ip) throw new Error(`Ticketera "${tipo}" sin IP configurada`);
+    const label = TICKETERA_LABEL[tipo];
+    const buf = this.buildTestPage(label, t.ip);
+    await this.sendTcp(t.ip, t.puerto, buf);
     this.logger.log(
-      `[MGMT] Prueba de impresión enviada a ${printer.label} (${printer.ip}:${printer.port})`,
+      `[MGMT] Prueba de impresión enviada a ${label} (${t.ip}:${t.puerto})`,
     );
   }
 

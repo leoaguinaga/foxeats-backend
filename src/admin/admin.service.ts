@@ -4,30 +4,20 @@ import {
   ConflictException,
   NotFoundException,
   BadRequestException,
-  OnApplicationBootstrap,
   Logger,
 } from '@nestjs/common';
-import { eq, sql, inArray, gt } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { hashPassword } from 'better-auth/crypto';
+import { randomUUID } from 'node:crypto';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE } from '../db/db.module';
 import * as schema from '../db/schema';
 import { auth } from '../auth/auth.config';
 
 @Injectable()
-export class AdminService implements OnApplicationBootstrap {
+export class AdminService {
   private readonly logger = new Logger(AdminService.name);
   constructor(@Inject(DRIZZLE) private db: NodePgDatabase<typeof schema>) {}
-
-  async onApplicationBootstrap() {
-    try {
-      const res = await this.syncDisponible();
-      this.logger.log(
-        `Stock sync al iniciar: ${res.conStock} disponibles, ${res.sinStock} agotados`,
-      );
-    } catch (err) {
-      this.logger.warn(`Stock sync falló al iniciar: ${err}`);
-    }
-  }
 
   // ─── Usuarios ─────────────────────────────────────────────────────────────
 
@@ -82,7 +72,12 @@ export class AdminService implements OnApplicationBootstrap {
 
   async updateUsuario(
     id: string,
-    data: { activo?: boolean; role?: 'mesero' | 'cajero' | 'administracion' },
+    data: {
+      name?: string;
+      activo?: boolean;
+      role?: 'mesero' | 'cajero' | 'administracion';
+    },
+    actorId?: string,
   ) {
     const [existing] = await this.db
       .select({ id: schema.user.id })
@@ -90,121 +85,149 @@ export class AdminService implements OnApplicationBootstrap {
       .where(eq(schema.user.id, id));
     if (!existing) throw new NotFoundException('Usuario no encontrado');
 
-    await this.db.update(schema.user).set(data).where(eq(schema.user.id, id));
+    if (!data || typeof data !== 'object')
+      throw new BadRequestException('Datos inválidos');
+    if (id === actorId && (data.activo === false || data.role !== undefined))
+      throw new BadRequestException(
+        'No puedes cambiar tu propio rol ni quitarte el acceso',
+      );
+    if (
+      data.role !== undefined &&
+      !['mesero', 'cajero', 'administracion'].includes(data.role)
+    )
+      throw new BadRequestException('Rol inválido');
+    if (data.activo !== undefined && typeof data.activo !== 'boolean')
+      throw new BadRequestException('Acceso inválido');
+    const changes = {
+      ...(data.name !== undefined
+        ? { name: this.cleanText(data.name, 'El nombre', 100, true) }
+        : {}),
+      ...(data.role !== undefined ? { role: data.role } : {}),
+      ...(data.activo !== undefined ? { activo: data.activo } : {}),
+      updatedAt: new Date(),
+    };
+    await this.db
+      .update(schema.user)
+      .set(changes)
+      .where(eq(schema.user.id, id));
     return { ok: true };
   }
 
-  // ─── Stock ────────────────────────────────────────────────────────────────
-
-  async getStock() {
-    const insumos = await this.db
-      .select()
-      .from(schema.insumo)
-      .where(eq(schema.insumo.activo, true));
-
-    const recetas = await this.db.select().from(schema.recetaPlato);
-    const platos = await this.db
-      .select({
-        id: schema.platoCarta.id,
-        nombre: schema.platoCarta.nombre,
-        disponible: schema.platoCarta.disponible,
-      })
-      .from(schema.platoCarta);
-    const platoMap = new Map(platos.map((p) => [p.id, p]));
-
-    return insumos.map((ins) => {
-      const platosAsociados = recetas
-        .filter((r) => r.insumoId === ins.id)
-        .map((r) => ({
-          ...platoMap.get(r.platoCartaId),
-          cantidadConsumida: r.cantidadConsumida,
-        }))
-        .filter(Boolean);
-      return { ...ins, platosAsociados };
-    });
-  }
-
-  async ajustarStock(
-    insumoId: string,
-    cantidad: number,
-    notas: string,
-    usuarioId: string,
-  ) {
-    if (!Number.isInteger(cantidad) || cantidad === 0)
+  // Fija una contraseña nueva y cierra todas sus sesiones abiertas.
+  async restablecerPassword(id: string, password: unknown, actorId?: string) {
+    if (id === actorId)
       throw new BadRequestException(
-        'Cantidad debe ser un entero distinto de 0',
+        'Otra persona de administración debe restablecer tu contraseña',
+      );
+    if (typeof password !== 'string' || password.length < 8)
+      throw new BadRequestException(
+        'La contraseña debe tener al menos 8 caracteres',
+      );
+    if (password.length > 128)
+      throw new BadRequestException(
+        'La contraseña debe tener como máximo 128 caracteres',
       );
 
-    const [ins] = await this.db
-      .select()
-      .from(schema.insumo)
-      .where(eq(schema.insumo.id, insumoId));
-    if (!ins) throw new NotFoundException('Insumo no encontrado');
+    const [existing] = await this.db
+      .select({ id: schema.user.id })
+      .from(schema.user)
+      .where(eq(schema.user.id, id));
+    if (!existing) throw new NotFoundException('Usuario no encontrado');
 
-    const [insumoActualizado] = await this.db
-      .update(schema.insumo)
-      .set({
-        stockActual: sql`${schema.insumo.stockActual} + ${cantidad}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.insumo.id, insumoId))
-      .returning({ stockActual: schema.insumo.stockActual });
-
-    // Re-habilitar TODOS los platos vinculados si el stock pasa a positivo
-    if (cantidad > 0 && (insumoActualizado?.stockActual ?? 0) > 0) {
-      const afectados = await this.db
-        .select({ id: schema.recetaPlato.platoCartaId })
-        .from(schema.recetaPlato)
-        .where(eq(schema.recetaPlato.insumoId, insumoId));
-      if (afectados.length) {
-        await this.db
-          .update(schema.platoCarta)
-          .set({ disponible: true, updatedAt: new Date() })
-          .where(
-            inArray(
-              schema.platoCarta.id,
-              afectados.map((r) => r.id),
-            ),
-          );
+    const hashed = await hashPassword(password);
+    await this.db.transaction(async (tx) => {
+      const [cuenta] = await tx
+        .select({ id: schema.account.id })
+        .from(schema.account)
+        .where(
+          and(
+            eq(schema.account.userId, id),
+            eq(schema.account.providerId, 'credential'),
+          ),
+        );
+      if (cuenta) {
+        await tx
+          .update(schema.account)
+          .set({ password: hashed, updatedAt: new Date() })
+          .where(eq(schema.account.id, cuenta.id));
+      } else {
+        await tx.insert(schema.account).values({
+          id: randomUUID(),
+          userId: id,
+          accountId: id,
+          providerId: 'credential',
+          password: hashed,
+        });
       }
-    }
-
-    return { stockActual: insumoActualizado?.stockActual ?? 0 };
+      await tx.delete(schema.session).where(eq(schema.session.userId, id));
+    });
+    return { ok: true };
   }
 
-  // Sincroniza disponible de todos los platos A/B según stockActual del insumo
-  async syncDisponible() {
-    const recetas = await this.db.select().from(schema.recetaPlato);
-    const insumos = await this.db
-      .select({ id: schema.insumo.id, stockActual: schema.insumo.stockActual })
-      .from(schema.insumo);
-    const stockMap = new Map(insumos.map((i) => [i.id, i.stockActual]));
+  private cleanText(
+    value: unknown,
+    label: string,
+    max: number,
+    required = false,
+  ) {
+    if (
+      typeof value !== 'string' ||
+      value.trim().length > max ||
+      (required && !value.trim())
+    )
+      throw new BadRequestException(
+        `${label} debe tener ${required ? 'entre 1 y' : 'como máximo'} ${max} caracteres`,
+      );
+    return value.trim();
+  }
 
-    const conStock: string[] = [];
-    const sinStock: string[] = [];
+  async getSettings() {
+    const [config] = await this.db
+      .select()
+      .from(schema.localConfig)
+      .where(eq(schema.localConfig.id, 'principal'));
+    return (
+      config ?? {
+        nombre: process.env.STORE_NAME || 'FoxEats',
+        logo: null,
+        direccion: '',
+        telefono: '',
+      }
+    );
+  }
 
-    for (const r of recetas) {
-      const stock = stockMap.get(r.insumoId) ?? 0;
-      (stock > 0 ? conStock : sinStock).push(r.platoCartaId);
-    }
-
-    if (conStock.length) {
-      await this.db
-        .update(schema.platoCarta)
-        .set({ disponible: true, updatedAt: new Date() })
-        .where(inArray(schema.platoCarta.id, conStock));
-    }
-    if (sinStock.length) {
-      await this.db
-        .update(schema.platoCarta)
-        .set({ disponible: false, updatedAt: new Date() })
-        .where(inArray(schema.platoCarta.id, sinStock));
-    }
-
-    return {
-      sincronizados: conStock.length + sinStock.length,
-      conStock: conStock.length,
-      sinStock: sinStock.length,
-    };
+  async updateSettings(body: {
+    nombre: string;
+    logo: string | null;
+    direccion: string;
+    telefono: string;
+  }) {
+    if (!body || typeof body !== 'object')
+      throw new BadRequestException('Datos inválidos');
+    const nombre = this.cleanText(
+      body.nombre,
+      'El nombre del local',
+      100,
+      true,
+    );
+    const direccion = this.cleanText(body.direccion, 'La dirección', 240);
+    const telefono = this.cleanText(body.telefono, 'El teléfono', 40);
+    const logo = body.logo;
+    if (
+      logo !== null &&
+      (typeof logo !== 'string' ||
+        logo.length > 350000 ||
+        !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(logo))
+    )
+      throw new BadRequestException(
+        'Usa un logo PNG, JPG o WebP de hasta 250 KB',
+      );
+    const values = { nombre, direccion, telefono, logo, updatedAt: new Date() };
+    const [saved] = await this.db
+      .insert(schema.localConfig)
+      .values({ id: 'principal', ...values })
+      .onConflictDoUpdate({ target: schema.localConfig.id, set: values })
+      .returning();
+    return saved;
   }
 }

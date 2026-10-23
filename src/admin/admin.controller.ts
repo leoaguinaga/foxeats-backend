@@ -5,11 +5,10 @@ import {
   Patch,
   Param,
   Body,
-  UseGuards,
   Req,
+  UseGuards,
   BadRequestException,
 } from '@nestjs/common';
-import type { Request } from 'express';
 import { AdminService } from './admin.service';
 import { AuthGuard, Roles } from '../auth/auth.guard';
 import { PrinterManagementService } from '../print/printer-management.service';
@@ -45,9 +44,49 @@ export class AdminController {
   updateUsuario(
     @Param('id') id: string,
     @Body()
-    body: { activo?: boolean; role?: 'mesero' | 'cajero' | 'administracion' },
+    body: {
+      name?: string;
+      activo?: boolean;
+      role?: 'mesero' | 'cajero' | 'administracion';
+    },
+    @Req() req: { user: { id: string } },
   ) {
-    return this.admin.updateUsuario(id, body);
+    return this.admin.updateUsuario(id, body, req.user.id);
+  }
+
+  @Post('users/:id/password')
+  restablecerPassword(
+    @Param('id') id: string,
+    @Body() body: { password: string },
+    @Req() req: { user: { id: string } },
+  ) {
+    return this.admin.restablecerPassword(id, body?.password, req.user.id);
+  }
+
+  // Nombre y logo para las cabeceras de caja y mesero (cualquier rol)
+  @Get('settings/brand')
+  @Roles('mesero', 'cajero', 'administracion')
+  async getBrand() {
+    const { nombre, logo } = await this.admin.getSettings();
+    return { nombre, logo };
+  }
+
+  @Get('settings')
+  getSettings() {
+    return this.admin.getSettings();
+  }
+
+  @Patch('settings')
+  updateSettings(
+    @Body()
+    body: {
+      nombre: string;
+      logo: string | null;
+      direccion: string;
+      telefono: string;
+    },
+  ) {
+    return this.admin.updateSettings(body);
   }
 
   // ─── Ticketeras ────────────────────────────────────────────────────────────
@@ -57,37 +96,23 @@ export class AdminController {
     return this.printerMgmt.getTicketeras();
   }
 
+  @Patch('ticketeras/:tipo')
+  async updateTicketera(
+    @Param('tipo') tipo: string,
+    @Body()
+    body: { modo?: 'simulada' | 'red'; ip?: string | null; puerto?: number },
+  ) {
+    if (tipo !== 'cocina' && tipo !== 'recibos')
+      throw new BadRequestException('tipo inválido');
+    await this.printerMgmt.updateTicketera(tipo, body);
+    return this.printerMgmt.getTicketeras();
+  }
+
   @Post('ticketeras/:tipo/test')
   async testPrint(@Param('tipo') tipo: string) {
     if (tipo !== 'cocina' && tipo !== 'recibos')
       throw new BadRequestException('tipo inválido');
     await this.printerMgmt.testPrint(tipo);
     return { ok: true };
-  }
-
-  // ─── Stock ─────────────────────────────────────────────────────────────────
-
-  @Get('stock')
-  getStock() {
-    return this.admin.getStock();
-  }
-
-  @Post('stock/ajuste')
-  ajustarStock(
-    @Body() body: { insumoId: string; cantidad: number; notas?: string },
-    @Req() req: Request,
-  ) {
-    const userId = (req as any).user?.id ?? 'sistema';
-    return this.admin.ajustarStock(
-      body.insumoId,
-      body.cantidad,
-      body.notas ?? '',
-      userId,
-    );
-  }
-
-  @Post('stock/sync')
-  syncDisponible() {
-    return this.admin.syncDisponible();
   }
 }

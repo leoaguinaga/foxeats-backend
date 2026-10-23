@@ -10,6 +10,8 @@ import { PrintModule } from './print/print.module';
 import { CajaModule } from './caja/caja.module';
 import { AdminModule } from './admin/admin.module';
 import { PromocionesModule } from './promociones/promociones.module';
+import { StockModule } from './stock/stock.module';
+import { BiSyncModule } from './bi-sync/bi-sync.module';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { PromocionesModule } from './promociones/promociones.module';
     CajaModule,
     AdminModule,
     PromocionesModule,
+    StockModule,
+    BiSyncModule,
   ],
   controllers: [AppController],
   providers: [AppService],

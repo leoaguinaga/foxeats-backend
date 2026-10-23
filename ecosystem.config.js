@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'mister-lukas-backend',
+      name: 'foxeats-backend',
       script: 'dist/src/main.js',
       instances: 1,
       autorestart: true,

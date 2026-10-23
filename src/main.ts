@@ -18,7 +18,7 @@ async function bootstrap() {
 
   app.use('/api/auth/{*splat}', toNodeHandler(auth));
 
-  app.use(express.json());
+  app.use(express.json({ limit: '512kb' }));
   app.use(express.urlencoded({ extended: true }));
 
   app.setGlobalPrefix('api', { exclude: ['auth/(.*)'] });

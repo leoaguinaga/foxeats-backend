@@ -1,7 +1,7 @@
 {
-  "name": "backend",
-  "version": "0.0.1",
-  "description": "",
+  "name": "foxeats-backend",
+  "version": "1.0.0",
+  "description": "FoxEats - White-Label Restaurant Operations Backend API",
   "author": "",
   "private": true,
   "license": "UNLICENSED",
@@ -22,7 +22,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "db:seed": "ts-node -r tsconfig-paths/register src/db/seed.ts",
-    "db:seed-catalogo": "ts-node -r tsconfig-paths/register src/db/seed-catalogo.ts"
+    "db:seed-catalogo": "ts-node -r tsconfig-paths/register src/db/seed-catalogo.ts",
+    "db:create-admin": "ts-node -r tsconfig-paths/register src/db/create-admin.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -31,6 +32,7 @@
     "better-auth": "^1.6.20",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
+    "express": "^5.2.1",
     "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"

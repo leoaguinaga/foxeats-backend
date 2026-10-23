@@ -2,14 +2,15 @@
           MISTER LUKA             
           ** COCINA **            
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-         R-0009
+         R-0006
          ═════════
-Mesa:    1
-Mesero:  Mesero Demo
-Hora:    13/7/2026, 22:02:15
+
+   >>> PARA LLEVAR <<<
+   Cliente: Leonardo
+
+Mesa:    0
+Mesero:  QA Staff
+Hora:    22/10/2026, 19:26:17
 ─────────────────────────────────
 1x  1/8 Pollo a la brasa
-     → pierna
-1x  1/4 Pollo a la brasa
-     → pecho
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

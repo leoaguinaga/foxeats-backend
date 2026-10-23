@@ -2,14 +2,18 @@
           MISTER LUKA             
     Pollo a la Brasa & Más        
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Mesa:    1
-Fecha:   13/7/2026, 22:06:33
+Llevar:  Leonardo
+Fecha:   22/10/2026, 19:25:56
 ─────────────────────────────────
-1x 1/8 Pollo a la brasa   S/12.00
-1x 1/4 Pollo a la brasa   S/22.00
-1x Inca Kola 500ml        S/5.00
+1x 1/8 Pollo a la brasa   S/10.20
+     ↳ Promo (-S/1.80)
+1x 1/4 Pollo a la brasa   S/18.70
+     ↳ Promo (-S/3.30)
 ─────────────────────────────────
-TOTAL:                     S/ 39.00
+Subtotal:                  S/ 34.00
+Descuento:                -S/  5.10
+Ajuste (Error en la toma del pedido): -S/  5.00
+TOTAL:                     S/ 23.90
 Método:  efectivo
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         ¡Gracias por venir!       

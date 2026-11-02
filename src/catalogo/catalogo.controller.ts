@@ -55,6 +55,13 @@ export class CatalogoController {
     return this.catalogo.updateCategoria(id, body);
   }
 
+  @Delete('categorias/:id')
+  @UseGuards(AuthGuard)
+  @Roles('administracion')
+  deleteCategoria(@Param('id') id: string) {
+    return this.catalogo.deleteCategoria(id);
+  }
+
   // ─── Insumos (admin) ───
 
   @Get('insumos')

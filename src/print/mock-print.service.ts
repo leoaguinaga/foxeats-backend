@@ -6,6 +6,7 @@ import {
   PrintService,
   ReceiptData,
 } from './print.interface';
+import { TicketBrandService } from './ticket-brand.service';
 
 const TICKETS_DIR = path.join(process.cwd(), 'dev-tickets');
 
@@ -22,13 +23,15 @@ function formatDate(d: Date) {
 export class MockPrintService implements PrintService {
   private readonly logger = new Logger(MockPrintService.name);
 
+  constructor(private readonly marca: TicketBrandService) {}
+
   async printKitchenTicket(data: KitchenTicketData): Promise<void> {
     ensureDir();
 
     const codigoRonda = `R-${String(data.numeroCorto).padStart(4, '0')}`;
     const lineas = [
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-      '          MISTER LUKA             ',
+      '          FoxEats                 ',
       '          ** COCINA **            ',
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
       `         ${codigoRonda}`,
@@ -96,10 +99,9 @@ export class MockPrintService implements PrintService {
 
     const lineas = [
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-      '          MISTER LUKA             ',
-      data.esPrecuenta
-        ? '       ** PRECUENTA **          '
-        : '    Pollo a la Brasa & Más        ',
+      ...((await this.marca.get()).logo ? ['          [ LOGO ]                '] : []),
+      '          FoxEats                 ',
+      ...(data.esPrecuenta ? ['       ** PRECUENTA **          '] : []),
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
       ...(data.tipoVisita === 'llevar'
         ? [`Llevar:  ${data.nombreCliente ?? 'Cliente'}`]

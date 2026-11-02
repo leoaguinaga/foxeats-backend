@@ -2,15 +2,11 @@
           MISTER LUKA             
           ** COCINA **            
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-         R-0006
+         R-0009
          ═════════
-
-   >>> PARA LLEVAR <<<
-   Cliente: Leonardo
-
-Mesa:    0
-Mesero:  QA Staff
-Hora:    22/10/2026, 19:26:17
+Mesa:    6
+Mesero:  Lucía Mendoza
+Hora:    22/10/2026, 20:40:44
 ─────────────────────────────────
-1x  1/8 Pollo a la brasa
+1x  Lomo saltado
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

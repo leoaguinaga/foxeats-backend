@@ -6,6 +6,7 @@ import { DevPrintController } from './dev-print.controller';
 import { PrinterManagementService } from './printer-management.service';
 import { TicketeraConfigService } from './ticketera-config.service';
 import { TicketeraPrintService } from './ticketera-print.service';
+import { TicketBrandService } from './ticket-brand.service';
 
 @Module({
   controllers: [DevPrintController],
@@ -15,6 +16,7 @@ import { TicketeraPrintService } from './ticketera-print.service';
     RealPrintService,
     TicketeraConfigService,
     PrinterManagementService,
+    TicketBrandService,
   ],
   exports: [PRINT_SERVICE, PrinterManagementService],
 })

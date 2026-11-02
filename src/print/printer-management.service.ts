@@ -6,6 +6,7 @@ import {
   TicketeraConfigService,
   TipoTicketera,
 } from './ticketera-config.service';
+import { TicketBrandService } from './ticket-brand.service';
 
 export interface PrinterInfo {
   tipo: TipoTicketera;
@@ -21,7 +22,10 @@ export interface PrinterInfo {
 export class PrinterManagementService {
   private readonly logger = new Logger(PrinterManagementService.name);
 
-  constructor(private readonly config: TicketeraConfigService) {}
+  constructor(
+    private readonly config: TicketeraConfigService,
+    private readonly marca: TicketBrandService,
+  ) {}
 
   async getTicketeras(): Promise<PrinterInfo[]> {
     const ticketeras = await this.config.list();
@@ -52,7 +56,7 @@ export class PrinterManagementService {
     const t = await this.config.get(tipo);
     if (!t.ip) throw new Error(`Ticketera "${tipo}" sin IP configurada`);
     const label = TICKETERA_LABEL[tipo];
-    const buf = this.buildTestPage(label, t.ip);
+    const buf = this.buildTestPage(label, t.ip, (await this.marca.get()).logo);
     await this.sendTcp(t.ip, t.puerto, buf);
     this.logger.log(
       `[MGMT] Prueba de impresión enviada a ${label} (${t.ip}:${t.puerto})`,
@@ -104,7 +108,7 @@ export class PrinterManagementService {
     });
   }
 
-  private buildTestPage(label: string, ip: string): Buffer {
+  private buildTestPage(label: string, ip: string, logo: Buffer | null): Buffer {
     const ESC = '\x1b';
     const GS = '\x1d';
     const LF = '\x0a';
@@ -114,11 +118,12 @@ export class PrinterManagementService {
       hour12: false,
     });
 
-    const parts = [
+    const parts: Array<string | Buffer> = [
       `${ESC}\x40`,
       `${ESC}\x61\x01`,
+      ...(logo ? [logo, `${LF}`] : []),
       `${ESC}\x45\x01`,
-      `MISTER LUKA${LF}`,
+      `FoxEats${LF}`,
       `${ESC}\x45\x00`,
       `PRUEBA DE IMPRESION${LF}`,
       `--------------------------------${LF}`,
@@ -133,6 +138,8 @@ export class PrinterManagementService {
       `${GS}\x56\x42\x00`,
     ];
 
-    return Buffer.from(parts.join(''), 'latin1');
+    return Buffer.concat(
+      parts.map((x) => (typeof x === 'string' ? Buffer.from(x, 'latin1') : x)),
+    );
   }
 }

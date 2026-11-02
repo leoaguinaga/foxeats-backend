@@ -127,6 +127,24 @@ export class CatalogoService {
     return row;
   }
 
+  // Solo se borra una categoría sin platos (los retirados cuentan: conservan su historial).
+  async deleteCategoria(id: string) {
+    const platos = await this.db
+      .select({ id: schema.platoCarta.id })
+      .from(schema.platoCarta)
+      .where(eq(schema.platoCarta.categoriaId, id));
+    if (platos.length > 0)
+      throw new BadRequestException(
+        `La categoría tiene ${platos.length} plato${platos.length === 1 ? '' : 's'} (incluidos los retirados). Muévelos a otra categoría primero.`,
+      );
+    const [row] = await this.db
+      .delete(schema.categoriaCarta)
+      .where(eq(schema.categoriaCarta.id, id))
+      .returning();
+    if (!row) throw new NotFoundException('Categoría no encontrada');
+    return { ok: true };
+  }
+
   // ─── Insumos ───
 
   async findAllInsumos() {

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as net from 'net';
 import { KitchenTicketData, ReceiptData } from './print.interface';
+import { MarcaTicket, TicketBrandService } from './ticket-brand.service';
 
 export interface PrinterTarget {
   ip: string;
@@ -13,11 +14,13 @@ export interface PrinterTarget {
 export class RealPrintService {
   private readonly logger = new Logger(RealPrintService.name);
 
+  constructor(private readonly marca: TicketBrandService) {}
+
   async printKitchenTicket(
     data: KitchenTicketData,
     { ip, port }: PrinterTarget,
   ): Promise<void> {
-    await this.sendTcp(ip, port, this.buildKitchenTicket(data));
+    await this.sendTcp(ip, port, this.buildKitchenTicket(data, await this.marca.get()));
     this.logger.log(`[RED] Comanda → Mesa ${data.mesaNumero} (${ip}:${port})`);
   }
 
@@ -25,7 +28,7 @@ export class RealPrintService {
     data: ReceiptData,
     { ip, port }: PrinterTarget,
   ): Promise<void> {
-    await this.sendTcp(ip, port, this.buildReceipt(data));
+    await this.sendTcp(ip, port, this.buildReceipt(data, await this.marca.get()));
     this.logger.log(
       `[RED] Recibo → Mesa ${data.mesaNumero} S/${data.total} (${ip}:${port})`,
     );
@@ -54,7 +57,7 @@ export class RealPrintService {
     });
   }
 
-  private buildKitchenTicket(data: KitchenTicketData): Buffer {
+  private buildKitchenTicket(data: KitchenTicketData, marca: MarcaTicket): Buffer {
     const ESC = '\x1b';
     const GS = '\x1d';
     const LF = '\x0a';
@@ -64,11 +67,11 @@ export class RealPrintService {
     });
     const codigoRonda = `R-${String(data.numeroCorto).padStart(4, '0')}`;
 
-    const parts = [
+    const parts: Array<string | Buffer> = [
       `${ESC}\x40`,
       `${ESC}\x61\x01`,
       `${ESC}\x45\x01`,
-      `MISTER LUKA${LF}`,
+      `${marca.nombre}${LF}`,
       `** COCINA **${LF}`,
       `${ESC}\x45\x00`,
       `--------------------------------${LF}`,
@@ -108,10 +111,12 @@ export class RealPrintService {
       `${LF}${LF}${LF}`,
       `${GS}\x56\x42\x00`,
     ];
-    return Buffer.from(parts.join(''), 'latin1');
+    return Buffer.concat(
+      parts.map((x) => (typeof x === 'string' ? Buffer.from(x, 'latin1') : x)),
+    );
   }
 
-  private buildReceipt(data: ReceiptData): Buffer {
+  private buildReceipt(data: ReceiptData, marca: MarcaTicket): Buffer {
     const ESC = '\x1b';
     const GS = '\x1d';
     const LF = '\x0a';
@@ -144,13 +149,15 @@ export class RealPrintService {
       totalItemsNeto + parseFloat(data.descuentoTotal ?? '0');
     const totalFinal = (parseFloat(data.total) + ajusteMonto).toFixed(2);
 
-    const parts = [
+    const parts: Array<string | Buffer> = [
       `${ESC}\x40`,
       `${ESC}\x61\x01`,
-      `${ESC}\x45\x01`,
-      `MISTER LUKA${LF}`,
-      `${ESC}\x45\x00`,
-      data.esPrecuenta ? `** PRECUENTA **${LF}` : `Pollo a la Brasa & Mas${LF}`,
+      ...(marca.logo
+        ? [marca.logo, `${LF}`]
+        : [`${ESC}\x45\x01`, `${marca.nombre}${LF}`, `${ESC}\x45\x00`]),
+      ...(marca.direccion ? [`${marca.direccion.slice(0, 32)}${LF}`] : []),
+      ...(marca.telefono ? [`Telf: ${marca.telefono}${LF}`] : []),
+      ...(data.esPrecuenta ? [`** PRECUENTA **${LF}`] : []),
       `--------------------------------${LF}`,
       `${ESC}\x61\x00`,
       ...(data.tipoVisita === 'llevar'
@@ -193,6 +200,8 @@ export class RealPrintService {
       `${LF}${LF}${LF}`,
       `${GS}\x56\x42\x00`,
     ];
-    return Buffer.from(parts.join(''), 'latin1');
+    return Buffer.concat(
+      parts.map((x) => (typeof x === 'string' ? Buffer.from(x, 'latin1') : x)),
+    );
   }
 }

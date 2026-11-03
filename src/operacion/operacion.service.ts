@@ -10,6 +10,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE } from '../db/db.module';
 import { PRINT_SERVICE } from '../print/print.interface';
 import type { PrintService } from '../print/print.interface';
+import { validarElecciones } from '../catalogo/combo';
 import { PromocionesService } from '../promociones/promociones.service';
 import { StockService } from '../stock/stock.service';
 import * as schema from '../db/schema';
@@ -101,6 +102,7 @@ export class OperacionService {
         nombre: schema.platoCarta.nombre,
         cantidad: schema.itemPedido.cantidad,
         notas: schema.itemPedido.notas,
+        elecciones: schema.itemPedido.elecciones,
         estado: schema.itemPedido.estado,
       })
       .from(schema.itemPedido)
@@ -147,6 +149,7 @@ export class OperacionService {
             nombre: i.nombre,
             cantidad: i.cantidad,
             notas: i.notas,
+            elecciones: i.elecciones,
           })),
       };
     });
@@ -307,7 +310,7 @@ export class OperacionService {
   async crearPedido(
     visitaId: string,
     usuarioId: string,
-    items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>,
+    items: Array<{ platoCartaId: string; cantidad: number; notas?: string; elecciones?: string[] }>,
     opciones: { paraLlevar?: boolean; nombreClienteLlevar?: string } = {},
   ) {
     const paraLlevar = !!opciones.paraLlevar;
@@ -354,6 +357,7 @@ export class OperacionService {
         throw new NotFoundException(`Plato ${item.platoCartaId} no encontrado`);
       if (!plato.disponible)
         throw new BadRequestException(`"${plato.nombre}" no está disponible`);
+      validarElecciones(plato, item);
     }
 
     // Obtener datos de mesa y mesero para el ticket
@@ -414,6 +418,7 @@ export class OperacionService {
           descuentoUnitario: descuentoUnitario.toFixed(2),
           promocionAplicadaId: promo?.id ?? null,
           notas: i.notas,
+          elecciones: validarElecciones(plato, i),
         };
       });
 
@@ -451,12 +456,53 @@ export class OperacionService {
             nombre: platoMap.get(i.platoCartaId)!.nombre,
             cantidad: i.cantidad,
             notas: i.notas,
+            elecciones: i.elecciones,
+            descripcion: platoMap.get(i.platoCartaId)!
+              .mostrarDescripcionEnCocina
+              ? platoMap.get(i.platoCartaId)!.descripcion
+              : null,
           })),
           fechaCreacion: resultado.fechaCreacion,
         })
         .catch((err) => {
           this.logger.error(
             `Error al imprimir ticket de cocina (Mesa): ${err.message}`,
+            err.stack,
+          );
+        });
+    }
+
+    // Lo que no pasa por cocina (bebidas, extras) sale en la ticketera de caja.
+    const itemsCaja = resultado.items.filter((i) => {
+      const plato = platoMap.get(i.platoCartaId);
+      return plato && !plato.categoria?.esParaCocina;
+    });
+
+    if (itemsCaja.length > 0) {
+      this.printer
+        .printBarTicket({
+          pedidoId: resultado.id,
+          numeroCorto: resultado.numeroCorto,
+          visitaId,
+          mesaNumero: mesa?.numero ?? 0,
+          mesero: mesero?.name ?? usuarioId,
+          paraLlevar: resultado.paraLlevar,
+          nombreClienteLlevar: resultado.nombreClienteLlevar ?? undefined,
+          items: itemsCaja.map((i) => ({
+            nombre: platoMap.get(i.platoCartaId)!.nombre,
+            cantidad: i.cantidad,
+            notas: i.notas,
+            elecciones: i.elecciones,
+            descripcion: platoMap.get(i.platoCartaId)!
+              .mostrarDescripcionEnCocina
+              ? platoMap.get(i.platoCartaId)!.descripcion
+              : null,
+          })),
+          fechaCreacion: resultado.fechaCreacion,
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Error al imprimir comanda de caja (Mesa): ${err.message}`,
             err.stack,
           );
         });

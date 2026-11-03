@@ -11,6 +11,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE } from '../db/db.module';
 import { PRINT_SERVICE } from '../print/print.interface';
 import type { PrintService } from '../print/print.interface';
+import { validarElecciones } from '../catalogo/combo';
 import { PromocionesService } from '../promociones/promociones.service';
 import { StockService } from '../stock/stock.service';
 import * as schema from '../db/schema';
@@ -688,7 +689,7 @@ export class CajaService {
     cajeroId: string,
     data: {
       nombreCliente?: string;
-      items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>;
+      items: Array<{ platoCartaId: string; cantidad: number; notas?: string; elecciones?: string[] }>;
     },
   ) {
     // Sin nombre, el pedido sale como «Cliente N»: es lo que se grita al entregar.
@@ -725,6 +726,7 @@ export class CajaService {
         throw new NotFoundException(`Plato ${item.platoCartaId} no encontrado`);
       if (!plato.disponible)
         throw new BadRequestException(`"${plato.nombre}" no está disponible`);
+      validarElecciones(plato, item);
     }
 
     const [cajero] = await this.db
@@ -772,6 +774,7 @@ export class CajaService {
           descuentoUnitario: descuentoUnitario.toFixed(2),
           promocionAplicadaId: promo?.id ?? null,
           notas: i.notas,
+          elecciones: validarElecciones(plato, i),
         };
       });
 
@@ -808,12 +811,53 @@ export class CajaService {
             nombre: platoMap.get(i.platoCartaId)!.nombre,
             cantidad: i.cantidad,
             notas: i.notas,
+            elecciones: i.elecciones,
+            descripcion: platoMap.get(i.platoCartaId)!
+              .mostrarDescripcionEnCocina
+              ? platoMap.get(i.platoCartaId)!.descripcion
+              : null,
           })),
           fechaCreacion: resultado.pedido.fechaCreacion,
         })
         .catch((err) => {
           this.logger.error(
             `Error al imprimir ticket de cocina (Llevar): ${err.message}`,
+            err.stack,
+          );
+        });
+    }
+
+    // Lo que no pasa por cocina (bebidas, extras) sale en la ticketera de caja.
+    const itemsCaja = resultado.items.filter((i) => {
+      const plato = platoMap.get(i.platoCartaId);
+      return plato && !plato.categoria?.esParaCocina;
+    });
+
+    if (itemsCaja.length > 0) {
+      this.printer
+        .printBarTicket({
+          pedidoId: resultado.pedido.id,
+          numeroCorto: resultado.pedido.numeroCorto,
+          visitaId: resultado.visita.id,
+          mesaNumero: 0,
+          mesero: cajero?.name ?? cajeroId,
+          paraLlevar: true,
+          nombreClienteLlevar: nombreCliente,
+          items: itemsCaja.map((i) => ({
+            nombre: platoMap.get(i.platoCartaId)!.nombre,
+            cantidad: i.cantidad,
+            notas: i.notas,
+            elecciones: i.elecciones,
+            descripcion: platoMap.get(i.platoCartaId)!
+              .mostrarDescripcionEnCocina
+              ? platoMap.get(i.platoCartaId)!.descripcion
+              : null,
+          })),
+          fechaCreacion: resultado.pedido.fechaCreacion,
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Error al imprimir comanda de caja (Llevar): ${err.message}`,
             err.stack,
           );
         });
@@ -831,7 +875,7 @@ export class CajaService {
       telefonoCliente?: string;
       direccionDelivery: string;
       costoEnvio: number;
-      items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>;
+      items: Array<{ platoCartaId: string; cantidad: number; notas?: string; elecciones?: string[] }>;
     },
   ) {
     const nombreCliente = data.nombreCliente.trim();
@@ -873,6 +917,7 @@ export class CajaService {
         throw new NotFoundException(`Plato ${item.platoCartaId} no encontrado`);
       if (!plato.disponible)
         throw new BadRequestException(`"${plato.nombre}" no está disponible`);
+      validarElecciones(plato, item);
     }
 
     const [cajero] = await this.db
@@ -923,6 +968,7 @@ export class CajaService {
           descuentoUnitario: descuentoUnitario.toFixed(2),
           promocionAplicadaId: promo?.id ?? null,
           notas: i.notas,
+          elecciones: validarElecciones(plato, i),
         };
       });
 
@@ -959,12 +1005,53 @@ export class CajaService {
             nombre: platoMap.get(i.platoCartaId)!.nombre,
             cantidad: i.cantidad,
             notas: i.notas,
+            elecciones: i.elecciones,
+            descripcion: platoMap.get(i.platoCartaId)!
+              .mostrarDescripcionEnCocina
+              ? platoMap.get(i.platoCartaId)!.descripcion
+              : null,
           })),
           fechaCreacion: resultado.pedido.fechaCreacion,
         })
         .catch((err) => {
           this.logger.error(
             `Error al imprimir ticket de cocina (Delivery): ${err.message}`,
+            err.stack,
+          );
+        });
+    }
+
+    // Lo que no pasa por cocina (bebidas, extras) sale en la ticketera de caja.
+    const itemsCaja = resultado.items.filter((i) => {
+      const plato = platoMap.get(i.platoCartaId);
+      return plato && !plato.categoria?.esParaCocina;
+    });
+
+    if (itemsCaja.length > 0) {
+      this.printer
+        .printBarTicket({
+          pedidoId: resultado.pedido.id,
+          numeroCorto: resultado.pedido.numeroCorto,
+          visitaId: resultado.visita.id,
+          mesaNumero: 0,
+          mesero: cajero?.name ?? cajeroId,
+          paraLlevar: true,
+          nombreClienteLlevar: nombreCliente,
+          items: itemsCaja.map((i) => ({
+            nombre: platoMap.get(i.platoCartaId)!.nombre,
+            cantidad: i.cantidad,
+            notas: i.notas,
+            elecciones: i.elecciones,
+            descripcion: platoMap.get(i.platoCartaId)!
+              .mostrarDescripcionEnCocina
+              ? platoMap.get(i.platoCartaId)!.descripcion
+              : null,
+          })),
+          fechaCreacion: resultado.pedido.fechaCreacion,
+        })
+        .catch((err) => {
+          this.logger.error(
+            `Error al imprimir comanda de caja (Delivery): ${err.message}`,
             err.stack,
           );
         });

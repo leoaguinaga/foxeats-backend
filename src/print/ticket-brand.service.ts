@@ -5,8 +5,8 @@ import sharp from 'sharp';
 import { DRIZZLE } from '../db/db.module';
 import * as schema from '../db/schema';
 
-// Ancho en puntos del logo: entra en papel de 58 mm (384) y queda centrado en el de 80 mm.
-const LOGO_ANCHO = 320;
+// Ancho en puntos del logo: ocupa dos tercios de los 576 puntos del papel de 80 mm y va centrado.
+const LOGO_ANCHO = 384;
 const LOGO_ALTO_MAX = 160;
 const UMBRAL = 160;
 

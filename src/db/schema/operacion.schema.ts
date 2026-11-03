@@ -194,6 +194,10 @@ export const itemPedido = pgTable('item_pedido', {
   // operativa del mesero, no una variante de producto con su propio precio.
   notas: text('notas'),
 
+  // Elecciones de un plato armable (platoCarta.combo): una entrada por opción
+  // elegida, p. ej. ["Ceviche clásico", "Chaufa de mariscos"]. Null si no aplica.
+  elecciones: jsonb('elecciones').$type<string[]>(),
+
   estado: estadoItemPedidoEnum('estado').notNull().default('pendiente'),
 
   createdAt: timestamp('created_at').notNull().defaultNow(),

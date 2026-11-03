@@ -121,6 +121,8 @@ export class CatalogoController {
       precio: string;
       categoriaId: string;
       descripcion?: string;
+      mostrarDescripcionEnCocina?: boolean;
+      combo?: { elegir: number; opciones: string[] } | null;
     },
   ) {
     return this.catalogo.createPlato(body);

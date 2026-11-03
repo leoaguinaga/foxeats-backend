@@ -8,6 +8,7 @@ import {
   uuid,
   pgEnum,
   index,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { user } from './auth.schema';
 
@@ -82,6 +83,15 @@ export const platoCarta = pgTable('plato_carta', {
   id: uuid('id').primaryKey().defaultRandom(),
   nombre: text('nombre').notNull(), // ej. "1/4 Pollo a la brasa", "Lomo saltado", "Inca Kola 500ml"
   descripcion: text('descripcion'),
+  // Si es true, la comanda de cocina imprime la descripción bajo el nombre
+  // (una parte por línea, separadas por "+"). Apagado por defecto: la
+  // descripción suele ser texto de carta, no una instrucción para cocina.
+  mostrarDescripcionEnCocina: boolean('mostrar_descripcion_en_cocina')
+    .notNull()
+    .default(false),
+  // Plato armable ("Arma tu dúo"): el mesero elige `elegir` de `opciones` al
+  // pedirlo. Null = plato normal. Las opciones son texto, no platos de carta.
+  combo: jsonb('combo').$type<{ elegir: number; opciones: string[] }>(),
   precio: numeric('precio', { precision: 10, scale: 2 }).notNull(),
   categoriaId: uuid('categoria_id')
     .notNull()

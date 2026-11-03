@@ -51,7 +51,7 @@ export class OperacionController {
     @Request() req: { user: { id: string } },
     @Body()
     body: {
-      items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>;
+      items: Array<{ platoCartaId: string; cantidad: number; notas?: string; elecciones?: string[] }>;
       paraLlevar?: boolean;
       nombreClienteLlevar?: string;
     },

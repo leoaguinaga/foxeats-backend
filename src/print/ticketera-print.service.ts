@@ -22,6 +22,14 @@ export class TicketeraPrintService implements PrintService {
     return this.mock.printKitchenTicket(data);
   }
 
+  async printBarTicket(data: KitchenTicketData): Promise<void> {
+    const t = await this.config.get('recibos');
+    if (t.modo === 'red' && t.ip) {
+      return this.real.printBarTicket(data, { ip: t.ip, port: t.puerto });
+    }
+    return this.mock.printBarTicket(data);
+  }
+
   async printReceipt(data: ReceiptData): Promise<void> {
     const t = await this.config.get('recibos');
     if (t.modo === 'red' && t.ip) {

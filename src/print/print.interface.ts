@@ -10,6 +10,10 @@ export interface KitchenTicketData {
     nombre: string;
     cantidad: number;
     notas?: string | null;
+    /** Composición del plato (ej. dúos): "A + B + C"; se imprime una parte por línea. */
+    descripcion?: string | null;
+    /** Opciones elegidas de un plato armable (ej. dúo marino). */
+    elecciones?: string[] | null;
   }>;
   fechaCreacion: Date;
 }
@@ -47,5 +51,7 @@ export const PRINT_SERVICE = Symbol('PRINT_SERVICE');
 
 export interface PrintService {
   printKitchenTicket(data: KitchenTicketData): Promise<void>;
+  /** Comanda de lo que no pasa por cocina (bebidas, extras): sale en la ticketera de caja. */
+  printBarTicket(data: KitchenTicketData): Promise<void>;
   printReceipt(data: ReceiptData): Promise<void>;
 }

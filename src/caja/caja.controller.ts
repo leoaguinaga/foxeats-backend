@@ -160,7 +160,7 @@ export class CajaController {
     @Body()
     body: {
       nombreCliente?: string;
-      items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>;
+      items: Array<{ platoCartaId: string; cantidad: number; notas?: string; elecciones?: string[] }>;
     },
   ) {
     return this.caja.crearPedidoLlevar(req.user.id, body);
@@ -175,7 +175,7 @@ export class CajaController {
       telefonoCliente?: string;
       direccionDelivery: string;
       costoEnvio: number;
-      items: Array<{ platoCartaId: string; cantidad: number; notas?: string }>;
+      items: Array<{ platoCartaId: string; cantidad: number; notas?: string; elecciones?: string[] }>;
     },
   ) {
     return this.caja.crearPedidoDelivery(req.user.id, body);

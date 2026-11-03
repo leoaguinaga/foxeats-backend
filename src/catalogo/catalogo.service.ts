@@ -276,12 +276,31 @@ export class CatalogoService {
     precio: string;
     categoriaId: string;
     descripcion?: string;
+    mostrarDescripcionEnCocina?: boolean;
+    combo?: { elegir: number; opciones: string[] } | null;
   }) {
+    this.validarCombo(data.combo);
     const [row] = await this.db
       .insert(schema.platoCarta)
       .values(data)
       .returning();
     return row;
+  }
+
+  private validarCombo(combo?: { elegir: number; opciones: string[] } | null) {
+    if (!combo) return;
+    const opciones = (combo.opciones ?? []).map((o) => String(o).trim());
+    if (
+      !Number.isInteger(combo.elegir) ||
+      combo.elegir < 1 ||
+      opciones.length < 1 ||
+      opciones.some((o) => !o)
+    ) {
+      throw new BadRequestException(
+        'El plato armable necesita cuántas opciones elegir y al menos una opción',
+      );
+    }
+    combo.opciones = opciones;
   }
 
   async createPlatosBulk(data: {
@@ -309,8 +328,11 @@ export class CatalogoService {
       categoriaId?: string;
       disponible?: boolean;
       activo?: boolean;
+      mostrarDescripcionEnCocina?: boolean;
+      combo?: { elegir: number; opciones: string[] } | null;
     },
   ) {
+    this.validarCombo(data.combo);
     const [row] = await this.db
       .update(schema.platoCarta)
       .set({ ...data, updatedAt: new Date() })

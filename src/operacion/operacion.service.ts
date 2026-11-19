@@ -768,6 +768,75 @@ export class OperacionService {
     });
   }
 
+  // ─── Cambiar de mesa ──────────────────────────────────────────────────────
+
+  async cambiarMesa(visitaId: string, nuevaMesaId: string) {
+    const destinoId = nuevaMesaId?.trim();
+    if (!destinoId) {
+      throw new BadRequestException('Debes elegir la mesa de destino');
+    }
+
+    await this.db.transaction(async (tx) => {
+      const [visita] = await tx
+        .select()
+        .from(schema.visitaMesa)
+        .where(eq(schema.visitaMesa.id, visitaId));
+
+      if (!visita) throw new NotFoundException('Visita no encontrada');
+      if (visita.estado === 'cerrada') {
+        throw new BadRequestException('La visita ya está cerrada');
+      }
+      if (visita.tipo !== 'mesa' || visita.paraLlevar || !visita.mesaId) {
+        throw new BadRequestException(
+          'Solo se puede cambiar de mesa una visita de salón',
+        );
+      }
+      if (visita.mesaId === destinoId) {
+        throw new BadRequestException('La visita ya está en esa mesa');
+      }
+
+      const [mesaDestino] = await tx
+        .select()
+        .from(schema.mesa)
+        .where(eq(schema.mesa.id, destinoId));
+
+      if (!mesaDestino) {
+        throw new NotFoundException('Mesa de destino no encontrada');
+      }
+      if (mesaDestino.numero === 0) {
+        throw new BadRequestException('No se puede mover a esta mesa');
+      }
+
+      // Ocupar la mesa destino de forma atómica evita que dos cambios
+      // simultáneos muevan dos visitas a la misma mesa libre.
+      const [ocupada] = await tx
+        .update(schema.mesa)
+        .set({ estado: 'ocupada', updatedAt: new Date() })
+        .where(
+          and(eq(schema.mesa.id, destinoId), eq(schema.mesa.estado, 'libre')),
+        )
+        .returning();
+
+      if (!ocupada) {
+        throw new BadRequestException(
+          `La mesa ${mesaDestino.numero} ya está ocupada`,
+        );
+      }
+
+      await tx
+        .update(schema.mesa)
+        .set({ estado: 'libre', updatedAt: new Date() })
+        .where(eq(schema.mesa.id, visita.mesaId));
+
+      await tx
+        .update(schema.visitaMesa)
+        .set({ mesaId: destinoId })
+        .where(eq(schema.visitaMesa.id, visitaId));
+    });
+
+    return this.getVisita(visitaId);
+  }
+
   // ─── Listar visitas activas para llevar y delivery ───────────────────────
 
   async getVisitasActivasLlevarDelivery() {

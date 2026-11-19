@@ -91,6 +91,14 @@ export class OperacionController {
     return this.operacion.cerrarVisita(visitaId);
   }
 
+  @Patch('visits/:id/table')
+  cambiarMesa(
+    @Param('id') visitaId: string,
+    @Body() body: { mesaId: string },
+  ) {
+    return this.operacion.cambiarMesa(visitaId, body?.mesaId);
+  }
+
   @Post('visits/llevar')
   abrirVisitaParaLlevar(
     @Request() req: { user: { id: string } },
